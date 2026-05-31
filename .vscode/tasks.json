@@ -1,0 +1,32 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Launch Live Server",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-Command",
+                "& { $pythonPath = (Get-Command python -ErrorAction SilentlyContinue).Source; if ($pythonPath) { python -m http.server 8000 } else { Write-Host 'Python not found. Please install Python or use Live Server extension.' } }"
+            ],
+            "isBackground": true,
+            "problemMatcher": {
+                "pattern": {
+                    "regexp": "^.*$",
+                    "file": 1,
+                    "location": 2,
+                    "message": 3
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "^.*Serving HTTP.*",
+                    "endsPattern": "^.*$"
+                }
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            }
+        }
+    ]
+}
