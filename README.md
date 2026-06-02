@@ -1,120 +1,126 @@
-# 3D First-Person Game
+# JG.3DGame - Manual do Jogo
 
-A simple 3D first-person game built with Babylon.js. Navigate a 3D environment with obstacles and explore the scene.
+Jogo 3D em primeira pessoa com combate, missoes, cutscenes e habilidades magicas, feito com Babylon.js.
 
-## Features
+## Visao Geral
 
-- **First-Person Perspective**: Experience the game from the player's viewpoint
-- **WASD Movement**: Move forward, backward, and strafe left/right
-- **Arrow Key Camera Control**: Look around using arrow keys
-- **3D Environment**: Rendered with Babylon.js featuring:
-  - Ground plane with green material
-  - Box obstacles with orange material
-  - Sphere objects with blue material
-  - Proper lighting and shadows
-- **Collision Detection**: Walk around obstacles naturally
+- Estilo: acao em primeira pessoa com progressao por missoes
+- Mapa: floresta, acampamento, rio, castelo e inimigos especiais
+- Inimigos: mortos-vivos, elfos sombrios, dragoes de fogo e dragoes de vento
+- Progresso: desbloqueio de habilidades por dialogos e eventos da historia
 
-## Controls
+## Requisitos
 
-| Key | Action |
-|-----|--------|
-| **W** | Move Forward |
-| **A** | Move Left |
-| **S** | Move Backward |
-| **D** | Move Right |
-| **↑ Arrow Up** | Look Up |
-| **↓ Arrow Down** | Look Down |
-| **← Arrow Left** | Look Left |
-| **→ Arrow Right** | Look Right |
+- Navegador moderno com suporte a WebGL
+- VS Code (recomendado) ou qualquer servidor HTTP local
+- Python instalado (opcional, para servidor local via terminal)
 
-## Getting Started
+## Como Rodar
 
-### Requirements
-- A modern web browser with WebGL support
-- VS Code with Live Server extension (recommended)
+### Opcao 1: Task do VS Code
 
-### Running the Game
+1. Abra a pasta do projeto no VS Code.
+2. Rode a task "Launch Live Server".
+3. Abra o endereco http://localhost:8000.
 
-**Option 1: Using Live Server (Recommended)**
-1. Install the [Live Server extension](https://marketplace.visualstudio.com/items?itemName=ritwickdey.LiveServer) for VS Code
-2. Right-click on `index.html` and select "Open with Live Server"
-3. The game will open in your default browser
+### Opcao 2: Servidor Python
 
-**Option 2: Using VS Code Task**
-1. Press `Ctrl+Shift+B` to run the "Launch Live Server" task
-2. The game will open automatically
+1. No terminal, na raiz do projeto, execute:
 
-**Option 3: Using Python HTTP Server**
 ```bash
 python -m http.server 8000
 ```
-Then navigate to `http://localhost:8000` in your browser.
 
-## Project Structure
+2. Abra http://localhost:8000 no navegador.
 
-```
+## Estrutura do Projeto
+
+```text
 JG.3DGame/
-├── index.html          # Main HTML file with canvas
-├── style.css           # Styling for the game interface
-├── game.js             # Game logic and Babylon.js scene setup
-├── README.md           # This file
-└── .github/
-    └── copilot-instructions.md  # Project documentation for Copilot
+|- index.html      # Estrutura da pagina e HUD
+|- style.css       # Estilos da interface
+|- game.js         # Logica principal do jogo
+|- assets/         # Sprites e imagens
+|- README.md       # Manual
 ```
 
-## Game Details
+## Controles
 
-### Scene Elements
+### Movimento e Camera
 
-- **Camera**: Positioned at height 2 units, looking forward
-- **Ground**: 100x100 unit plane at the base
-- **Obstacles**: Various boxes and spheres placed around the scene
-- **Lighting**: Hemispherical light for overall illumination and a point light for shadow effects
+| Tecla | Acao |
+|---|---|
+| W / A / S / D | Mover personagem |
+| Setas (Up/Down/Left/Right) | Girar camera |
+| Space | Pular |
 
-### Movement System
+### Combate e Habilidades
 
-- Smooth camera-relative movement (WASD keys)
-- Arrow keys for independent camera rotation
-- Collision detection prevents walking through obstacles
-- Gravity system for realistic movement
+| Tecla | Acao |
+|---|---|
+| F (toque rapido) | Ataque de espada |
+| F (segurar) | Dark Energy (quando desbloqueado e sem cooldown) |
+| Q | Water Slash (quando desbloqueado) |
+| R | Wind Slash (quando desbloqueado) |
+| E (toque rapido) | Interagir (entrar/sair da casa, falar com NPC, abrir/fechar missoes) |
+| E (segurar) | Fire Slash (quando desbloqueado) |
 
-## Customization
+### UI de Missoes
 
-You can easily modify the game by editing `game.js`:
+Quando a tela de missoes estiver aberta:
 
-- **Change movement speed**: Adjust the `moveSpeed` variable (default: 0.3)
-- **Change rotation speed**: Adjust the `rotationSpeed` variable (default: 0.02)
-- **Add more obstacles**: Create new boxes or spheres and set their positions
-- **Change colors**: Modify the `diffuse` property of materials
-- **Adjust scene size**: Modify the ground dimensions and object positions
+- Arrow Down / Arrow Up: rolar lista
+- Page Down / Page Up: rolagem longa
+- E: fechar tela de missoes
 
-## Technology Stack
+## Atalhos de Debug
 
-- **Babylon.js 5.53.0**: 3D graphics engine
-- **HTML5**: Markup structure
-- **CSS3**: Styling
-- **JavaScript (ES6)**: Game logic and controls
+### Spawn de Dragoes
 
-## Browser Compatibility
+- D + D + 1: spawn do dragao de fogo
+- D + D + 2: spawn do segundo dragao (dragao de vento)
 
-- Chrome/Chromium (recommended)
-- Firefox
-- Safari
-- Edge
+Observacao:
 
-## Notes
+- O atalho funciona em sequencia rapida: pressione D duas vezes e, em seguida, 1 ou 2.
 
-- The game requires WebGL support in your browser
-- For best performance, use a modern browser
-- The camera has a maximum look-up and look-down angle to prevent disorientation
+## Fluxo Basico de Jogo
 
-## Future Enhancements
+1. Explore a area inicial.
+2. Interaja com NPCs para abrir a tela de missoes.
+3. Aceite uma missao disponivel.
+4. Elimine os inimigos conforme o objetivo.
+5. Conclua a missao para liberar as proximas etapas e habilidades.
 
-Possible improvements for this game:
-- Add jumping mechanic
-- Implement mouse look (in addition to arrow keys)
-- Add sound effects and background music
-- Create a skybox for a more immersive environment
-- Add pickable items and inventory system
-- Implement enemies/NPCs
-- Create multiple levels
+## Dicas
+
+- Use ataques rapidos de espada (F toque) para economizar cooldown das magias.
+- Guarde habilidades para grupos de inimigos ou alvos fortes.
+- Em encontros com dragoes, mantenha movimento lateral constante.
+- Se a tela de missoes estiver aberta, feche antes de retomar combate/movimento total.
+
+## Solucao de Problemas
+
+- Tela em branco: verifique se esta abrindo por HTTP (nao por arquivo local).
+- Baixa performance: feche abas pesadas e use navegador atualizado.
+- Teclas nao respondem: clique na pagina do jogo para garantir foco.
+- Atalho de dragao nao acionou: repita D, D e depois 1/2 com intervalo curto.
+
+## Tecnologias
+
+- Babylon.js
+- JavaScript (ES6)
+- HTML5
+- CSS3
+
+## Changelog
+
+### 2026-06-01
+
+- Manual do jogo expandido com instrucoes completas de uso.
+- Controles de combate e habilidades documentados (F, Q, R, E e Space).
+- Documentacao da UI de missoes e navegacao por teclado.
+- Atalho de debug de spawn de dragoes atualizado para sequencia rapida:
+	- D + D + 1 -> spawn do dragao de fogo
+	- D + D + 2 -> spawn do dragao de vento
+- Ajustes recentes de gameplay e visual com foco em dragoes estilizados 3D (fogo e vento).

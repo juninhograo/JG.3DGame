@@ -104,8 +104,10 @@ html, body {
     position: absolute;
     inset: 0;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: center;
+    padding: 16px;
+    overflow-y: auto;
     background: rgba(0,0,0,0.68);
     z-index: 300;
 }
@@ -116,10 +118,70 @@ html, body {
     border-radius: 12px;
     padding: 28px 34px;
     max-width: 560px;
-    width: 90%;
+    width: min(560px, 100%);
+    height: min(760px, calc(100vh - 32px));
+    max-height: calc(100vh - 32px);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 0;
     color: #EEE;
     font-family: Georgia, serif;
     box-shadow: 0 0 40px rgba(140,80,220,0.5);
+}
+
+#mission-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 6px;
+    touch-action: pan-y;
+    overscroll-behavior: contain;
+    scrollbar-width: auto;
+}
+
+#mission-list::-webkit-scrollbar {
+    width: 10px;
+}
+
+#mission-list::-webkit-scrollbar-track {
+    background: rgba(18, 10, 30, 0.75);
+    border-radius: 6px;
+}
+
+#mission-list::-webkit-scrollbar-thumb {
+    background: #8860cc;
+    border-radius: 6px;
+}
+
+#mission-list::-webkit-scrollbar-thumb:hover {
+    background: #a07ae0;
+}
+
+#mission-scroll-controls {
+    display: flex;
+    gap: 10px;
+    margin-top: 2px;
+    flex-shrink: 0;
+}
+
+#mission-scroll-up,
+#mission-scroll-down {
+    flex: 1;
+    padding: 8px 10px;
+    background: #24163a;
+    border: 1px solid #8860cc;
+    border-radius: 6px;
+    color: #d8c7ff;
+    font-size: 12px;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+}
+
+#mission-scroll-up:hover,
+#mission-scroll-down:hover {
+    background: #3a255f;
 }
 
 #mission-dialog h2 {
@@ -169,12 +231,17 @@ html, body {
 .badge-locked    { background: #2A2A2A; color: #777; }
 
 #mission-close-btn {
-    margin-top: 14px; width: 100%; padding: 10px;
+    margin-top: 6px; width: 100%; padding: 10px;
     background: #2E1A50; border: 1px solid #8860cc;
     border-radius: 6px; color: #CCC; font-size: 14px;
     cursor: pointer; letter-spacing: 1px;
+    flex-shrink: 0;
 }
 #mission-close-btn:hover { background: #4A2A80; }
+
+body.mission-ui-open #gameCanvas {
+    pointer-events: none;
+}
 
 #mission-status {
     position: absolute;

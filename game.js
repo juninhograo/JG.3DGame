@@ -9,7 +9,7 @@ scene.gravity = new BABYLON.Vector3(0, -9.81, 0);
 
 // Create camera (first-person view)
 const camera = new BABYLON.UniversalCamera('camera', new BABYLON.Vector3(0, 2, -10));
-camera.attachControl(canvas, false); // Don't use Babylon's default controls
+camera.attachControl(canvas, true); // Keep browser default events so UI overlays can scroll
 camera.inertia = 0.7;
 camera.speed = 0; // We'll control movement manually
 camera.angularSensibility = 1000;
@@ -37,6 +37,7 @@ const player = {
     currentY: 2,
     hasSword: false,
     sword: null,
+    swimArms: null,
     lastSwordAttack: 0,
     swordCooldown: 500, // milliseconds
     lastDamagedZombies: new Set(), // Track zombies hit by current sword swing
@@ -188,9 +189,140 @@ const treePositions = [
     [0, 70], [10, 75], [-10, 75]
 ];
 
+// Create a winding river that starts near camp and flows through the forest to map edge.
+const RIVER_CENTERLINE = [
+    new BABYLON.Vector3(126, 0.08, 210),
+    new BABYLON.Vector3(112, 0.08, 178),
+    new BABYLON.Vector3(92, 0.08, 142),
+    new BABYLON.Vector3(66, 0.08, 102),
+    new BABYLON.Vector3(40, 0.08, 60),
+    new BABYLON.Vector3(18, 0.08, 14),
+    new BABYLON.Vector3(2, 0.08, -38),
+    new BABYLON.Vector3(-10, 0.08, -96),
+    new BABYLON.Vector3(-22, 0.08, -162),
+    new BABYLON.Vector3(-34, 0.08, -232),
+    new BABYLON.Vector3(-48, 0.08, -298)
+];
+const RIVER_HALF_WIDTH = 12;
+
+function distancePointToSegment2D(px, pz, ax, az, bx, bz) {
+    const abx = bx - ax;
+    const abz = bz - az;
+    const apx = px - ax;
+    const apz = pz - az;
+    const abLenSq = abx * abx + abz * abz;
+    if (abLenSq <= 0.000001) {
+        const dx = px - ax;
+        const dz = pz - az;
+        return Math.sqrt(dx * dx + dz * dz);
+    }
+    const t = Math.max(0, Math.min(1, (apx * abx + apz * abz) / abLenSq));
+    const cx = ax + abx * t;
+    const cz = az + abz * t;
+    const dx = px - cx;
+    const dz = pz - cz;
+    return Math.sqrt(dx * dx + dz * dz);
+}
+
+function isInRiver(x, z, extraWidth = 0) {
+    const width = RIVER_HALF_WIDTH + extraWidth;
+    for (let i = 0; i < RIVER_CENTERLINE.length - 1; i++) {
+        const a = RIVER_CENTERLINE[i];
+        const b = RIVER_CENTERLINE[i + 1];
+        const d = distancePointToSegment2D(x, z, a.x, a.z, b.x, b.z);
+        if (d <= width) return true;
+    }
+    return false;
+}
+
 treePositions.forEach(pos => {
-    createTree(pos[0], pos[1]);
+    if (!isInRiver(pos[0], pos[1], 3.5)) {
+        createTree(pos[0], pos[1]);
+    }
 });
+
+function createRiver() {
+    const riverCenterline = RIVER_CENTERLINE;
+    const riverHalfWidth = RIVER_HALF_WIDTH;
+    const leftBank = [];
+    const rightBank = [];
+
+    for (let i = 0; i < riverCenterline.length; i++) {
+        const p = riverCenterline[i];
+        const prev = riverCenterline[Math.max(0, i - 1)];
+        const next = riverCenterline[Math.min(riverCenterline.length - 1, i + 1)];
+        const tangent = next.subtract(prev);
+        tangent.y = 0;
+        tangent.normalize();
+
+        const normal = new BABYLON.Vector3(-tangent.z, 0, tangent.x);
+        leftBank.push(p.add(normal.scale(riverHalfWidth)));
+        rightBank.push(p.add(normal.scale(-riverHalfWidth)));
+    }
+
+    const river = BABYLON.MeshBuilder.CreateRibbon('riverRibbon', {
+        pathArray: [leftBank, rightBank],
+        closeArray: false,
+        closePath: false,
+        sideOrientation: BABYLON.Mesh.DOUBLESIDE,
+        updatable: false
+    }, scene);
+
+    const riverMat = new BABYLON.StandardMaterial('riverMat', scene);
+    riverMat.diffuseColor = new BABYLON.Color3(0.10, 0.50, 0.95);
+    riverMat.emissiveColor = new BABYLON.Color3(0.08, 0.24, 0.42);
+    riverMat.specularColor = new BABYLON.Color3(0.7, 0.85, 1.0);
+    riverMat.alpha = 0.96;
+    riverMat.backFaceCulling = false;
+    river.material = riverMat;
+    river.isPickable = false;
+    river.checkCollisions = false;
+}
+
+function createParkourRockBridges() {
+    const bridgeSegments = [1, 3, 5, 7];
+    const stoneMat = new BABYLON.StandardMaterial('bridgeStoneMat', scene);
+    stoneMat.diffuseColor = new BABYLON.Color3(0.40, 0.40, 0.42);
+    stoneMat.emissiveColor = new BABYLON.Color3(0.08, 0.08, 0.10);
+
+    bridgeSegments.forEach((idx, bridgeIdx) => {
+        if (idx >= RIVER_CENTERLINE.length - 1) return;
+        const a = RIVER_CENTERLINE[idx];
+        const b = RIVER_CENTERLINE[idx + 1];
+        const mid = a.add(b).scale(0.5);
+        const tangent = b.subtract(a);
+        tangent.y = 0;
+        tangent.normalize();
+        const normal = new BABYLON.Vector3(-tangent.z, 0, tangent.x);
+
+        for (let i = -3; i <= 3; i++) {
+            // Leave one intentional gap to make each crossing feel like parkour.
+            if (i === (bridgeIdx % 3) - 1) continue;
+
+            const along = (bridgeIdx % 2 === 0 ? 1 : -1) * (i * 0.8);
+            const across = i * (RIVER_HALF_WIDTH * 0.33);
+            const pos = mid
+                .add(normal.scale(across))
+                .add(tangent.scale(along));
+
+            const h = 1.8 + ((i + bridgeIdx) % 3) * 0.28;
+            const w = 1.6 + (Math.abs(i) % 2) * 0.35;
+            const stone = BABYLON.MeshBuilder.CreateCylinder('bridgeRock_' + bridgeIdx + '_' + i, {
+                diameterTop: w * 0.72,
+                diameterBottom: w,
+                height: h,
+                tessellation: 7
+            }, scene);
+            stone.position = new BABYLON.Vector3(pos.x, h * 0.5 - 0.1, pos.z);
+            stone.rotation.y = (i + bridgeIdx) * 0.35;
+            stone.material = stoneMat;
+            stone.checkCollisions = true;
+        }
+    });
+}
+
+createRiver();
+createParkourRockBridges();
 
 // Array to store all bushes for billboarding
 const bushes = [];
@@ -238,15 +370,137 @@ const HOUSE_POS = new BABYLON.Vector3(120, 0, 150); // Even further from forest
 
 // Give player sword from the very start
 createPlayerSword();
+createPlayerSwimArms();
 
 // Zombie system
 const zombies = [];
 let spawnTimer = 0;
 const SPAWN_INTERVAL = 10000; // 10 seconds in milliseconds
+const DARK_ELF_SPAWN_CHANCE = 0.10;
+const DARK_ELF_ELF_WIN_CHANCE = 0.60;
+const corruptedWaterBolts = [];
 let zombieSoldier = null; // reference to the active soldier boss
 let kingSwoopActive = false;
 let kingSwoopTimer = 0;
 let kingSwoopDone = false;
+let kingDarkElfTarget = null;
+
+function getDarkElfSpawnChance() {
+    let stage = 0;
+    if (player.hasWaterSlash) stage++;
+    if (player.hasWindSlash) stage++;
+    if (player.hasFireSlash) stage++;
+    if (player.hasDarkEnergy) stage++;
+    return Math.min(0.20, DARK_ELF_SPAWN_CHANCE + stage * 0.025);
+}
+
+function removeCampElf(elf) {
+    if (!elf || elf.isKing) return;
+    const idx = elves.indexOf(elf);
+    if (idx >= 0) elves.splice(idx, 1);
+    if (elf.group) elf.group.dispose();
+}
+
+function onDarkElfDefeatedElf(darkElf, elfVictim) {
+    if (!darkElf || !elfVictim || elfVictim.isKing) return;
+    createExplosion(elfVictim.group.position, 'purple');
+    removeCampElf(elfVictim);
+    darkElf.kingTapHitsRemaining = 2;
+    kingDarkElfTarget = darkElf;
+
+    const prompt = document.getElementById('interact-prompt');
+    prompt.textContent = '👑 The King avenges the fallen elf!';
+    prompt.style.color = '#FFD700';
+    prompt.style.borderColor = '#FFD700';
+    prompt.style.display = 'block';
+    setTimeout(() => {
+        prompt.style.display = 'none';
+        prompt.style.color = '';
+        prompt.style.borderColor = '';
+    }, 1300);
+}
+
+function spawnCorruptedWaterBolt(startPos, targetPos) {
+    const direction = targetPos.subtract(startPos);
+    direction.y = 0;
+    if (direction.length() < 0.001) return;
+    direction.normalize();
+
+    const now = Date.now();
+    const plane = BABYLON.MeshBuilder.CreatePlane('corruptWater_' + now, { width: 2.4, height: 1.0 }, scene);
+    plane.position = startPos.clone();
+    plane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
+    plane.isPickable = false;
+
+    const mat = new BABYLON.StandardMaterial('corruptWaterMat_' + now, scene);
+    const tex = new BABYLON.Texture('assets/Copilot_20260531_181340.png', scene, false, true);
+    tex.hasAlpha = true;
+    tex.uScale = 1 / 7;
+    tex.vScale = 1 / 9;
+    tex.uOffset = 0;
+    tex.vOffset = 8 / 9;
+
+    mat.diffuseTexture = tex;
+    mat.emissiveTexture = tex;
+    mat.useAlphaFromDiffuseTexture = true;
+    mat.disableLighting = true;
+    mat.emissiveColor = new BABYLON.Color3(0.50, 0.30, 0.95);
+    mat.alphaMode = BABYLON.Engine.ALPHA_ADD;
+    mat.alpha = 0.95;
+    mat.backFaceCulling = false;
+    plane.material = mat;
+
+    corruptedWaterBolts.push({
+        plane,
+        mat,
+        tex,
+        vel: direction.scale(0.45),
+        born: now,
+        frame: 0,
+        hit: false
+    });
+}
+
+function updateCorruptedWaterBolts(dt) {
+    const maxLife = 1050;
+    const frameDur = 120;
+    for (let i = corruptedWaterBolts.length - 1; i >= 0; i--) {
+        const bolt = corruptedWaterBolts[i];
+        const age = Date.now() - bolt.born;
+        const lifeRatio = 1 - age / maxLife;
+
+        if (bolt.hit || lifeRatio <= 0) {
+            bolt.plane.dispose();
+            bolt.mat.dispose();
+            corruptedWaterBolts.splice(i, 1);
+            continue;
+        }
+
+        bolt.plane.position.addInPlace(bolt.vel);
+
+        const frame = Math.min(6, Math.floor(age / frameDur));
+        if (frame !== bolt.frame) {
+            bolt.frame = frame;
+            bolt.tex.uOffset = frame / 7;
+        }
+
+        bolt.mat.alpha = Math.min(1, lifeRatio * 2.3);
+
+        if (!playerInsideHouse) {
+            const distToPlayer = BABYLON.Vector3.Distance(bolt.plane.position, camera.position);
+            if (distToPlayer < 1.1) {
+                bolt.hit = true;
+                if (!cutsceneActive) {
+                    player.health = Math.max(0, player.health - 1);
+                    updateHealthBar();
+                    if (player.health <= 0) {
+                        startCutscene();
+                    }
+                }
+            }
+        }
+    }
+}
 
 // ===== ZOMBIE SOLDIER (spawns after mission 2) =====
 function createZombieSoldier() {
@@ -258,7 +512,7 @@ function createZombieSoldier() {
             1,
             camera.position.z + Math.sin(angle) * 30
         );
-    } while (nearHouse(spawnPos.x, spawnPos.z));
+    } while (nearHouse(spawnPos.x, spawnPos.z) || isInRiver(spawnPos.x, spawnPos.z, 3));
 
     const g = new BABYLON.TransformNode('soldierGroup_' + Math.random(), scene);
     g.position = spawnPos;
@@ -386,7 +640,7 @@ function createSoldierElf() {
             1,
             camera.position.z + Math.sin(angle) * 28
         );
-    } while (nearHouse(spawnPos.x, spawnPos.z));
+    } while (nearHouse(spawnPos.x, spawnPos.z) || isInRiver(spawnPos.x, spawnPos.z, 3));
 
     const g = new BABYLON.TransformNode('soldierElfGroup_' + Math.random(), scene);
     g.position = spawnPos;
@@ -509,7 +763,7 @@ function createNecromancer() {
             1,
             camera.position.z + Math.sin(angle) * 35
         );
-    } while (nearHouse(spawnPos.x, spawnPos.z));
+    } while (nearHouse(spawnPos.x, spawnPos.z) || isInRiver(spawnPos.x, spawnPos.z, 3));
 
     const g = new BABYLON.TransformNode('necroGroup_' + Math.random(), scene);
     g.position = spawnPos;
@@ -635,7 +889,253 @@ function createZombie() {
             1,
             (Math.random() - 0.5) * 100 + 30
         );
-    } while (nearHouse(spawnPos.x, spawnPos.z));
+    } while (nearHouse(spawnPos.x, spawnPos.z) || isInRiver(spawnPos.x, spawnPos.z, 3));
+
+    // 10% chance: spawn a Dark Elf instead of a normal zombie.
+    if (Math.random() < getDarkElfSpawnChance()) {
+        const darkElfGroup = new BABYLON.TransformNode('darkElfGroup_' + Math.random(), scene);
+        darkElfGroup.position = spawnPos;
+
+        const mkMat = (r, g, b, em = 0.32) => {
+            const m = new BABYLON.StandardMaterial('de_' + Math.random(), scene);
+            m.diffuseColor = new BABYLON.Color3(r, g, b);
+            m.emissiveColor = new BABYLON.Color3(r * em, g * em, b * em);
+            return m;
+        };
+
+        const hoodMat = mkMat(0.08, 0.06, 0.12, 0.30);
+        const clothMat = mkMat(0.13, 0.06, 0.20, 0.35);
+        const armorMat = mkMat(0.16, 0.12, 0.22, 0.30);
+        const eyeMat = mkMat(0.95, 0.28, 0.08, 0.95);
+        const swordMat = mkMat(0.55, 0.18, 0.80, 0.75);
+        const bootMat = mkMat(0.08, 0.07, 0.11, 0.22);
+
+        const head = BABYLON.MeshBuilder.CreateBox('deHead_' + Math.random(), { width: 0.64, height: 0.58, depth: 0.60 }, scene);
+        head.position.y = 1.52;
+        head.material = hoodMat;
+        head.parent = darkElfGroup;
+
+        const hoodFront = BABYLON.MeshBuilder.CreateBox('deHoodF_' + Math.random(), { width: 0.54, height: 0.22, depth: 0.18 }, scene);
+        hoodFront.position = new BABYLON.Vector3(0, 1.62, 0.26);
+        hoodFront.material = hoodMat;
+        hoodFront.parent = darkElfGroup;
+
+        const eyeLeft = BABYLON.MeshBuilder.CreateBox('deEyeL_' + Math.random(), { width: 0.11, height: 0.11, depth: 0.05 }, scene);
+        eyeLeft.position = new BABYLON.Vector3(-0.12, 1.52, 0.31);
+        eyeLeft.material = eyeMat;
+        eyeLeft.parent = darkElfGroup;
+        const eyeRight = BABYLON.MeshBuilder.CreateBox('deEyeR_' + Math.random(), { width: 0.11, height: 0.11, depth: 0.05 }, scene);
+        eyeRight.position = new BABYLON.Vector3(0.12, 1.52, 0.31);
+        eyeRight.material = eyeMat;
+        eyeRight.parent = darkElfGroup;
+
+        const body = BABYLON.MeshBuilder.CreateBox('deBody_' + Math.random(), { width: 0.60, height: 0.64, depth: 0.46 }, scene);
+        body.position.y = 0.92;
+        body.material = clothMat;
+        body.parent = darkElfGroup;
+
+        const shoulderL = BABYLON.MeshBuilder.CreateBox('deShL_' + Math.random(), { width: 0.18, height: 0.16, depth: 0.24 }, scene);
+        shoulderL.position = new BABYLON.Vector3(-0.34, 1.12, 0.03);
+        shoulderL.material = armorMat;
+        shoulderL.parent = darkElfGroup;
+        const shoulderR = BABYLON.MeshBuilder.CreateBox('deShR_' + Math.random(), { width: 0.18, height: 0.16, depth: 0.24 }, scene);
+        shoulderR.position = new BABYLON.Vector3(0.34, 1.12, 0.03);
+        shoulderR.material = armorMat;
+        shoulderR.parent = darkElfGroup;
+
+        const armLeft = BABYLON.MeshBuilder.CreateBox('deArmL_' + Math.random(), { width: 0.22, height: 0.22, depth: 0.40 }, scene);
+        armLeft.position = new BABYLON.Vector3(-0.42, 1.02, 0.22);
+        armLeft.material = clothMat;
+        armLeft.parent = darkElfGroup;
+        const armRight = BABYLON.MeshBuilder.CreateBox('deArmR_' + Math.random(), { width: 0.22, height: 0.22, depth: 0.40 }, scene);
+        armRight.position = new BABYLON.Vector3(0.42, 1.02, 0.22);
+        armRight.material = clothMat;
+        armRight.parent = darkElfGroup;
+
+        const fistLeft = BABYLON.MeshBuilder.CreateBox('deFistL_' + Math.random(), { width: 0.20, height: 0.20, depth: 0.22 }, scene);
+        fistLeft.position = new BABYLON.Vector3(-0.42, 1.02, 0.52);
+        fistLeft.material = clothMat;
+        fistLeft.parent = darkElfGroup;
+        const fistRight = BABYLON.MeshBuilder.CreateBox('deFistR_' + Math.random(), { width: 0.20, height: 0.20, depth: 0.22 }, scene);
+        fistRight.position = new BABYLON.Vector3(0.42, 1.02, 0.52);
+        fistRight.material = clothMat;
+        fistRight.parent = darkElfGroup;
+
+        const sword = BABYLON.MeshBuilder.CreateBox('deSword_' + Math.random(), { width: 0.06, height: 0.55, depth: 0.06 }, scene);
+        sword.position = new BABYLON.Vector3(0.56, 1.00, 0.50);
+        sword.rotation.x = -0.55;
+        sword.material = swordMat;
+        sword.parent = darkElfGroup;
+
+        const legLeft = BABYLON.MeshBuilder.CreateBox('deLegL_' + Math.random(), { width: 0.24, height: 0.32, depth: 0.28 }, scene);
+        legLeft.position = new BABYLON.Vector3(-0.16, 0.50, 0.0);
+        legLeft.material = armorMat;
+        legLeft.parent = darkElfGroup;
+        const legRight = BABYLON.MeshBuilder.CreateBox('deLegR_' + Math.random(), { width: 0.24, height: 0.32, depth: 0.28 }, scene);
+        legRight.position = new BABYLON.Vector3(0.16, 0.50, 0.0);
+        legRight.material = armorMat;
+        legRight.parent = darkElfGroup;
+
+        const bootLeft = BABYLON.MeshBuilder.CreateBox('deBootL_' + Math.random(), { width: 0.26, height: 0.20, depth: 0.30 }, scene);
+        bootLeft.position = new BABYLON.Vector3(-0.16, 0.24, 0.02);
+        bootLeft.material = bootMat;
+        bootLeft.parent = darkElfGroup;
+        const bootRight = BABYLON.MeshBuilder.CreateBox('deBootR_' + Math.random(), { width: 0.26, height: 0.20, depth: 0.30 }, scene);
+        bootRight.position = new BABYLON.Vector3(0.16, 0.24, 0.02);
+        bootRight.material = bootMat;
+        bootRight.parent = darkElfGroup;
+
+        const darkElf = {
+            group: darkElfGroup,
+            position: spawnPos,
+            speed: 0.19,
+            health: 4,
+            maxHealth: 4,
+            type: 'purple',
+            isDarkElf: true,
+            hitPlayer: false,
+            isDead: false,
+            kingTapHitsRemaining: 2,
+            lastCorruptedWater: 0,
+            healthBar: null,
+            head, body,
+            armLeft, armRight, fistLeft, fistRight,
+            legLeft, legRight, bootLeft, bootRight,
+            sword,
+            animationState: 'walk',
+            animationTimer: 0,
+            animationSpeed: 0.006,
+            deathTimer: 0,
+            canJump: true,
+            isJumping: false,
+            jumpVelocity: 0,
+            jumpCooldown: 0,
+            jumpHeight: 0
+        };
+
+        darkElf.healthBar = createZombieHealthBar(darkElf);
+        updateZombieHealthBar(darkElf);
+        zombies.push(darkElf);
+        return;
+    }
+
+    // 50% chance: spawn a skeleton instead of a normal zombie.
+    if (Math.random() < 0.5) {
+        const skeletonGroup = new BABYLON.TransformNode('skeletonGroup_' + Math.random(), scene);
+        skeletonGroup.position = spawnPos;
+
+        const mkMat = (r, g, b, em = 0.28) => {
+            const m = new BABYLON.StandardMaterial('sk_' + Math.random(), scene);
+            m.diffuseColor = new BABYLON.Color3(r, g, b);
+            m.emissiveColor = new BABYLON.Color3(r * em, g * em, b * em);
+            return m;
+        };
+
+        const boneMat = mkMat(0.92, 0.94, 0.98, 0.24);
+        const jointMat = mkMat(0.72, 0.76, 0.84, 0.18);
+        const eyeMat = mkMat(0.05, 0.05, 0.07, 0.08);
+        const swordMat = mkMat(0.78, 0.80, 0.86, 0.28);
+        const hiltMat = mkMat(0.82, 0.54, 0.10, 0.24);
+
+        const head = BABYLON.MeshBuilder.CreateBox('skHead_' + Math.random(), { width: 0.62, height: 0.56, depth: 0.58 }, scene);
+        head.position.y = 1.56;
+        head.material = boneMat;
+        head.parent = skeletonGroup;
+
+        const eyeLeft = BABYLON.MeshBuilder.CreateBox('skEyeL_' + Math.random(), { width: 0.12, height: 0.16, depth: 0.04 }, scene);
+        eyeLeft.position = new BABYLON.Vector3(-0.14, 1.55, 0.30);
+        eyeLeft.material = eyeMat;
+        eyeLeft.parent = skeletonGroup;
+        const eyeRight = BABYLON.MeshBuilder.CreateBox('skEyeR_' + Math.random(), { width: 0.12, height: 0.16, depth: 0.04 }, scene);
+        eyeRight.position = new BABYLON.Vector3(0.14, 1.55, 0.30);
+        eyeRight.material = eyeMat;
+        eyeRight.parent = skeletonGroup;
+
+        const body = BABYLON.MeshBuilder.CreateBox('skBody_' + Math.random(), { width: 0.46, height: 0.54, depth: 0.30 }, scene);
+        body.position.y = 0.98;
+        body.material = boneMat;
+        body.parent = skeletonGroup;
+
+        for (let i = -1; i <= 1; i++) {
+            const rib = BABYLON.MeshBuilder.CreateBox('skRib_' + i + '_' + Math.random(), { width: 0.56, height: 0.05, depth: 0.06 }, scene);
+            rib.position = new BABYLON.Vector3(0, 0.88 + i * 0.12, 0.14);
+            rib.material = jointMat;
+            rib.parent = skeletonGroup;
+        }
+
+        const armLeft = BABYLON.MeshBuilder.CreateBox('skArmL_' + Math.random(), { width: 0.16, height: 0.18, depth: 0.36 }, scene);
+        armLeft.position = new BABYLON.Vector3(-0.40, 1.04, 0.18);
+        armLeft.material = boneMat;
+        armLeft.parent = skeletonGroup;
+        const armRight = BABYLON.MeshBuilder.CreateBox('skArmR_' + Math.random(), { width: 0.16, height: 0.18, depth: 0.36 }, scene);
+        armRight.position = new BABYLON.Vector3(0.40, 1.04, 0.18);
+        armRight.material = boneMat;
+        armRight.parent = skeletonGroup;
+
+        const fistLeft = BABYLON.MeshBuilder.CreateBox('skFistL_' + Math.random(), { width: 0.16, height: 0.16, depth: 0.18 }, scene);
+        fistLeft.position = new BABYLON.Vector3(-0.40, 1.04, 0.46);
+        fistLeft.material = boneMat;
+        fistLeft.parent = skeletonGroup;
+        const fistRight = BABYLON.MeshBuilder.CreateBox('skFistR_' + Math.random(), { width: 0.16, height: 0.16, depth: 0.18 }, scene);
+        fistRight.position = new BABYLON.Vector3(0.40, 1.04, 0.46);
+        fistRight.material = boneMat;
+        fistRight.parent = skeletonGroup;
+
+        const legLeft = BABYLON.MeshBuilder.CreateBox('skLegL_' + Math.random(), { width: 0.16, height: 0.34, depth: 0.18 }, scene);
+        legLeft.position = new BABYLON.Vector3(-0.14, 0.48, 0.0);
+        legLeft.material = boneMat;
+        legLeft.parent = skeletonGroup;
+        const legRight = BABYLON.MeshBuilder.CreateBox('skLegR_' + Math.random(), { width: 0.16, height: 0.34, depth: 0.18 }, scene);
+        legRight.position = new BABYLON.Vector3(0.14, 0.48, 0.0);
+        legRight.material = boneMat;
+        legRight.parent = skeletonGroup;
+
+        const bootLeft = BABYLON.MeshBuilder.CreateBox('skBootL_' + Math.random(), { width: 0.18, height: 0.14, depth: 0.24 }, scene);
+        bootLeft.position = new BABYLON.Vector3(-0.14, 0.20, 0.04);
+        bootLeft.material = jointMat;
+        bootLeft.parent = skeletonGroup;
+        const bootRight = BABYLON.MeshBuilder.CreateBox('skBootR_' + Math.random(), { width: 0.18, height: 0.14, depth: 0.24 }, scene);
+        bootRight.position = new BABYLON.Vector3(0.14, 0.20, 0.04);
+        bootRight.material = jointMat;
+        bootRight.parent = skeletonGroup;
+
+        const swordHilt = BABYLON.MeshBuilder.CreateBox('skSwordHilt_' + Math.random(), { width: 0.07, height: 0.18, depth: 0.07 }, scene);
+        swordHilt.position = new BABYLON.Vector3(0.52, 0.98, 0.44);
+        swordHilt.rotation.x = -0.45;
+        swordHilt.material = hiltMat;
+        swordHilt.parent = skeletonGroup;
+        const sword = BABYLON.MeshBuilder.CreateBox('skSword_' + Math.random(), { width: 0.07, height: 0.54, depth: 0.05 }, scene);
+        sword.position = new BABYLON.Vector3(0.55, 1.14, 0.42);
+        sword.rotation.x = -0.45;
+        sword.material = swordMat;
+        sword.parent = skeletonGroup;
+
+        const skeleton = {
+            group: skeletonGroup,
+            position: spawnPos,
+            speed: 0.17,
+            health: 2,
+            maxHealth: 2,
+            type: 'white',
+            isSkeleton: true,
+            hitPlayer: false,
+            isDead: false,
+            healthBar: null,
+            head, body,
+            armLeft, armRight, fistLeft, fistRight,
+            legLeft, legRight, bootLeft, bootRight,
+            sword,
+            animationState: 'walk',
+            animationTimer: 0,
+            animationSpeed: 0.006,
+            deathTimer: 0
+        };
+
+        skeleton.healthBar = createZombieHealthBar(skeleton);
+        updateZombieHealthBar(skeleton);
+        zombies.push(skeleton);
+        return;
+    }
 
     // ===== MATERIALS =====
     // Skin color varies by type; clothing/pants/boots stay the same
@@ -807,6 +1307,7 @@ let cutsceneTimer = 0;
 let cutsceneResetDone = false;
 const elves = [];
 let campGroup = null;
+let kingCastleGroup = null;
 
 // ===== HOUSE & MISSION STATE =====
 let playerInsideHouse = false;
@@ -823,6 +1324,7 @@ const MISSIONS = [
     { id: 3, name: 'Stand Your Ground', desc: "The Necromancer's army grows bolder. Slay 30 of his minions and send him a message.", killGoal: 30 },
     { id: 4, name: 'Malachar Rising',    desc: 'The Necromancer himself has descended upon the forest. Face Malachar the Undying — and end this war.',     killGoal: 1  },
     { id: 5, name: 'The Inferanoth Strike', desc: 'Fire Dragons of the Inferanoth descend from the volcanic peaks, drawn by the chaos. Slay 3 of the magma dragons.', killGoal: 3 },
+    { id: 6, name: 'Storm of the Veltharyn', desc: 'Wind Dragons of the Veltharyn spiral down from the high peaks. They are faster than fire and strike before you hear them. Slay 4.', killGoal: 4 },
 ];
 
 function createElf(x, z) {
@@ -1045,7 +1547,12 @@ function createElf(x, z) {
         legLeft: legLeft,
         legRight: legRight,
         blade: blade,
-        shield: shield
+        shield: shield,
+        canJump: true,
+        isJumping: false,
+        jumpVelocity: 0,
+        jumpCooldown: 0,
+        jumpHeight: 0
     };
 }
 
@@ -1281,7 +1788,12 @@ function createElfKing(x, z) {
         capeCollar: capeCollar,
         capeUpper: capeUpper,
         capeLower: capeLower,
-        isKing: true
+        isKing: true,
+        canJump: true,
+        isJumping: false,
+        jumpVelocity: 0,
+        jumpCooldown: 0,
+        jumpHeight: 0
     };
 }
 
@@ -1306,8 +1818,204 @@ function safeCampPos(cx, cz, maxRadius) {
         x = cx + Math.cos(angle) * r;
         z = cz + Math.sin(angle) * r;
         attempts++;
-    } while (nearHouse(x, z) && attempts < 20);
+    } while ((nearHouse(x, z) || isInRiver(x, z, 2.5)) && attempts < 30);
     return new BABYLON.Vector3(x, 1, z);
+}
+
+function getClosestRiverPointAndNormal(x, z) {
+    let best = null;
+
+    for (let i = 0; i < RIVER_CENTERLINE.length - 1; i++) {
+        const a = RIVER_CENTERLINE[i];
+        const b = RIVER_CENTERLINE[i + 1];
+        const abx = b.x - a.x;
+        const abz = b.z - a.z;
+        const abLenSq = abx * abx + abz * abz;
+        if (abLenSq <= 0.000001) continue;
+
+        const apx = x - a.x;
+        const apz = z - a.z;
+        const t = Math.max(0, Math.min(1, (apx * abx + apz * abz) / abLenSq));
+        const cx = a.x + abx * t;
+        const cz = a.z + abz * t;
+        const dx = x - cx;
+        const dz = z - cz;
+        const d = Math.sqrt(dx * dx + dz * dz);
+
+        if (!best || d < best.distance) {
+            const tangent = new BABYLON.Vector3(abx, 0, abz);
+            tangent.normalize();
+            const normal = new BABYLON.Vector3(-tangent.z, 0, tangent.x);
+            best = { x: cx, z: cz, distance: d, normal };
+        }
+    }
+
+    return best;
+}
+
+function createKingCastleNearRiver(campX, campZ) {
+    if (kingCastleGroup) {
+        kingCastleGroup.dispose();
+        kingCastleGroup = null;
+    }
+
+    const campPos = new BABYLON.Vector3(campX, 0, campZ);
+    const towardCenter = new BABYLON.Vector3(-campX, 0, -campZ);
+    if (towardCenter.length() < 0.001) towardCenter.z = -1;
+    towardCenter.normalize();
+    const side = new BABYLON.Vector3(-towardCenter.z, 0, towardCenter.x);
+
+    const isOpenSpace = (x, z) => {
+        if (nearHouse(x, z, 8)) return false;
+        if (isInRiver(x, z, 6)) return false;
+        for (const hut of hutColliders) {
+            const dx = x - hut.x;
+            const dz = z - hut.z;
+            if (Math.sqrt(dx * dx + dz * dz) < hut.radius + 4) return false;
+        }
+        for (const t of treePositions) {
+            const dx = x - t[0];
+            const dz = z - t[1];
+            if (Math.sqrt(dx * dx + dz * dz) < 4.2) return false;
+        }
+        return true;
+    };
+
+    let castlePos = null;
+    const ringDistances = [26, 34, 42, 50, 58];
+    const lateralOffsets = [0, -12, 12, -22, 22];
+    for (const d of ringDistances) {
+        for (const lat of lateralOffsets) {
+            const p = campPos
+                .add(towardCenter.scale(d))
+                .add(side.scale(lat));
+            if (isOpenSpace(p.x, p.z)) {
+                castlePos = new BABYLON.Vector3(p.x, 0, p.z);
+                break;
+            }
+        }
+        if (castlePos) break;
+    }
+
+    if (!castlePos) {
+        const fallback = campPos.add(towardCenter.scale(42));
+        castlePos = new BABYLON.Vector3(fallback.x, 0, fallback.z);
+    }
+
+    kingCastleGroup = new BABYLON.TransformNode('kingCastleGroup_' + Math.random(), scene);
+    kingCastleGroup.position = new BABYLON.Vector3(castlePos.x, 0, castlePos.z);
+    kingCastleGroup.rotation.y = Math.atan2(campX - castlePos.x, campZ - castlePos.z) + Math.PI;
+
+    const stoneMat = new BABYLON.StandardMaterial('kCastleStone_' + Math.random(), scene);
+    stoneMat.diffuseColor = new BABYLON.Color3(0.16, 0.34, 0.92);
+    stoneMat.emissiveColor = new BABYLON.Color3(0.36, 0.30, 0.06);
+    stoneMat.specularColor = new BABYLON.Color3(0.95, 0.90, 0.25);
+
+    const flagMat = new BABYLON.StandardMaterial('kCastleFlag_' + Math.random(), scene);
+    flagMat.diffuseColor = new BABYLON.Color3(0.11, 0.25, 0.52);
+    flagMat.emissiveColor = new BABYLON.Color3(0.05, 0.09, 0.18);
+    flagMat.backFaceCulling = false;
+
+    const mk = (name, mesh) => {
+        mesh.name = name + '_' + Math.random();
+        mesh.parent = kingCastleGroup;
+        mesh.material = stoneMat;
+        mesh.checkCollisions = true;
+        return mesh;
+    };
+
+    // Plinth and keep
+    const plinth = mk('kCastlePlinth', BABYLON.MeshBuilder.CreateBox('kCastlePlinth', { width: 20, height: 1.2, depth: 14 }, scene));
+    plinth.position = new BABYLON.Vector3(0, 0.6, 0);
+
+    const keep = mk('kCastleKeep', BABYLON.MeshBuilder.CreateBox('kCastleKeep', { width: 12, height: 4.8, depth: 7.4 }, scene));
+    keep.position = new BABYLON.Vector3(0, 3.2, -0.3);
+
+    // Front wall with gate opening section
+    const frontWallL = mk('kCastleFrontL', BABYLON.MeshBuilder.CreateBox('kCastleFrontL', { width: 5.0, height: 3.8, depth: 1.1 }, scene));
+    frontWallL.position = new BABYLON.Vector3(-4.5, 2.5, 4.9);
+    const frontWallR = mk('kCastleFrontR', BABYLON.MeshBuilder.CreateBox('kCastleFrontR', { width: 5.0, height: 3.8, depth: 1.1 }, scene));
+    frontWallR.position = new BABYLON.Vector3(4.5, 2.5, 4.9);
+
+    const gateArch = mk('kCastleGate', BABYLON.MeshBuilder.CreateCylinder('kCastleGate', {
+        height: 1.0,
+        diameterTop: 2.3,
+        diameterBottom: 2.3,
+        tessellation: 20,
+        arc: 0.5
+    }, scene));
+    gateArch.position = new BABYLON.Vector3(0, 1.3, 4.95);
+    gateArch.rotation.x = Math.PI / 2;
+
+    // Corner towers and center tower
+    const towerOffsets = [
+        [-7.2, -4.6], [7.2, -4.6],
+        [-7.2, 4.7], [7.2, 4.7]
+    ];
+    towerOffsets.forEach((p, i) => {
+        const tower = mk('kCastleTower' + i, BABYLON.MeshBuilder.CreateCylinder('kCastleTower' + i, {
+            diameter: 3.2,
+            height: 7.8,
+            tessellation: 18
+        }, scene));
+        tower.position = new BABYLON.Vector3(p[0], 4.0, p[1]);
+    });
+
+    const centerTower = mk('kCastleCenterTower', BABYLON.MeshBuilder.CreateCylinder('kCastleCenterTower', {
+        diameter: 3.6,
+        height: 9.2,
+        tessellation: 18
+    }, scene));
+    centerTower.position = new BABYLON.Vector3(0, 4.8, -2.4);
+
+    // Battlements
+    for (let i = -5; i <= 5; i++) {
+        if (Math.abs(i) <= 1) continue;
+        const tooth = mk('kCastleToothF' + i, BABYLON.MeshBuilder.CreateBox('kCastleToothF' + i, {
+            width: 0.9,
+            height: 0.8,
+            depth: 0.8
+        }, scene));
+        tooth.position = new BABYLON.Vector3(i * 1.05, 5.7, 3.65);
+    }
+
+    for (let i = -4; i <= 4; i++) {
+        const tooth = mk('kCastleToothB' + i, BABYLON.MeshBuilder.CreateBox('kCastleToothB' + i, {
+            width: 0.9,
+            height: 0.8,
+            depth: 0.8
+        }, scene));
+        tooth.position = new BABYLON.Vector3(i * 1.2, 5.7, -4.0);
+    }
+
+    // Blue flags
+    const addFlag = (x, y, z, scale = 1) => {
+        const pole = BABYLON.MeshBuilder.CreateBox('kCastlePole_' + Math.random(), {
+            width: 0.08 * scale,
+            height: 2.0 * scale,
+            depth: 0.08 * scale
+        }, scene);
+        pole.parent = kingCastleGroup;
+        pole.position = new BABYLON.Vector3(x, y, z);
+        pole.material = stoneMat;
+
+        const flag = BABYLON.MeshBuilder.CreatePlane('kCastleFlag_' + Math.random(), {
+            width: 1.2 * scale,
+            height: 0.62 * scale
+        }, scene);
+        flag.parent = kingCastleGroup;
+        flag.position = new BABYLON.Vector3(x + 0.62 * scale, y + 0.58 * scale, z);
+        flag.rotation.y = Math.PI / 2;
+        flag.material = flagMat;
+    };
+
+    addFlag(0, 9.6, -2.4, 1.2);
+    addFlag(-7.2, 7.3, -4.6, 0.85);
+    addFlag(7.2, 7.3, -4.6, 0.85);
+    addFlag(-7.2, 7.3, 4.7, 0.85);
+    addFlag(7.2, 7.3, 4.7, 0.85);
+
+    return kingCastleGroup;
 }
 
 // Function to create elf camp
@@ -1332,8 +2040,14 @@ function createCamp(centerX, centerZ) {
     ];
     
     huts.forEach(hut => {
-        const hutX = Math.cos(hut.angle) * hutDistance;
-        const hutZ = Math.sin(hut.angle) * hutDistance;
+        let hutX = Math.cos(hut.angle) * hutDistance;
+        let hutZ = Math.sin(hut.angle) * hutDistance;
+        let guard = 0;
+        while (isInRiver(centerX + hutX, centerZ + hutZ, 2.5) && guard < 18) {
+            hutX += Math.cos(hut.angle) * 1.8;
+            hutZ += Math.sin(hut.angle) * 1.8;
+            guard++;
+        }
         
         // Main hut base
         const base = BABYLON.MeshBuilder.CreateBox('hutBase_' + Math.random(), { width: 2, height: 2, depth: 2 }, scene);
@@ -1357,6 +2071,8 @@ function createCamp(centerX, centerZ) {
         door.material = woodMat;
         door.parent = campGroup;
     });
+
+    createKingCastleNearRiver(centerX, centerZ);
     
     return campGroup;
 }
@@ -1600,8 +2316,91 @@ function exitHouse() {
 }
 
 // ===== MISSION UI =====
+let missionScrollSetupDone = false;
+
+function setupMissionUIScrolling() {
+    if (missionScrollSetupDone) return;
+
+    const missionUiEl = document.getElementById('mission-ui');
+    const dialogEl = document.getElementById('mission-dialog');
+    const listEl = document.getElementById('mission-list');
+    const scrollUpBtn = document.getElementById('mission-scroll-up');
+    const scrollDownBtn = document.getElementById('mission-scroll-down');
+    if (!missionUiEl || !dialogEl || !listEl) return;
+
+    const forwardWheelToScroll = (target) => (e) => {
+        target.scrollTop += e.deltaY;
+        e.preventDefault();
+        e.stopPropagation();
+    };
+
+    dialogEl.addEventListener('wheel', forwardWheelToScroll(listEl), { passive: false });
+    listEl.addEventListener('wheel', forwardWheelToScroll(listEl), { passive: false });
+    missionUiEl.addEventListener('wheel', forwardWheelToScroll(listEl), { passive: false });
+
+    let lastTouchY = 0;
+    const onTouchStart = (e) => {
+        if (!e.touches || e.touches.length === 0) return;
+        lastTouchY = e.touches[0].clientY;
+        e.stopPropagation();
+    };
+
+    const onTouchMove = (target) => (e) => {
+        if (!e.touches || e.touches.length === 0) return;
+        const currentY = e.touches[0].clientY;
+        const deltaY = lastTouchY - currentY;
+        target.scrollTop += deltaY;
+        lastTouchY = currentY;
+        e.preventDefault();
+        e.stopPropagation();
+    };
+
+    dialogEl.addEventListener('touchstart', onTouchStart, { passive: true });
+    listEl.addEventListener('touchstart', onTouchStart, { passive: true });
+    missionUiEl.addEventListener('touchstart', onTouchStart, { passive: true });
+    dialogEl.addEventListener('touchmove', onTouchMove(listEl), { passive: false });
+    listEl.addEventListener('touchmove', onTouchMove(listEl), { passive: false });
+    missionUiEl.addEventListener('touchmove', onTouchMove(listEl), { passive: false });
+
+    window.addEventListener('keydown', (e) => {
+        if (!missionUIOpen) return;
+
+        const keyStep = 70;
+        const pageStep = Math.max(180, Math.floor(listEl.clientHeight * 0.85));
+        if (e.key === 'ArrowDown') {
+            listEl.scrollBy({ top: keyStep, behavior: 'smooth' });
+            e.preventDefault();
+        } else if (e.key === 'ArrowUp') {
+            listEl.scrollBy({ top: -keyStep, behavior: 'smooth' });
+            e.preventDefault();
+        } else if (e.key === 'PageDown') {
+            listEl.scrollBy({ top: pageStep, behavior: 'smooth' });
+            e.preventDefault();
+        } else if (e.key === 'PageUp') {
+            listEl.scrollBy({ top: -pageStep, behavior: 'smooth' });
+            e.preventDefault();
+        }
+    });
+
+    const BUTTON_SCROLL_STEP = 140;
+    if (scrollUpBtn) {
+        scrollUpBtn.addEventListener('click', () => {
+            listEl.scrollBy({ top: -BUTTON_SCROLL_STEP, behavior: 'smooth' });
+        });
+    }
+    if (scrollDownBtn) {
+        scrollDownBtn.addEventListener('click', () => {
+            listEl.scrollBy({ top: BUTTON_SCROLL_STEP, behavior: 'smooth' });
+        });
+    }
+
+    missionScrollSetupDone = true;
+}
+
 function openMissionUI() {
+    setupMissionUIScrolling();
     missionUIOpen = true;
+    clearGameplayInput();
     const dialogueEl = document.getElementById('mission-dialogue-text');
     const listEl     = document.getElementById('mission-list');
 
@@ -1633,11 +2432,17 @@ function openMissionUI() {
     });
 
     document.getElementById('mission-ui').style.display = 'flex';
+    document.getElementById('mission-dialog').scrollTop = 0;
+    listEl.scrollTop = 0;
+    document.body.classList.add('mission-ui-open');
+    camera.detachControl(canvas);
 }
 
 function closeMissionUI() {
     missionUIOpen = false;
     document.getElementById('mission-ui').style.display = 'none';
+    document.body.classList.remove('mission-ui-open');
+    camera.attachControl(canvas, true);
 }
 
 function selectMission(id) {
@@ -1666,9 +2471,21 @@ function selectMission(id) {
             setTimeout(() => createFireDragonEnemy(), 2000 + i * 4000);
         }
         const prompt = document.getElementById('interact-prompt');
-        prompt.textContent = '🔥 The Inferanoth descend!';
+        prompt.textContent = '\uD83D\uDD25 The Inferanoth descend!';
         prompt.style.color = '#f84';
         prompt.style.borderColor = '#f84';
+        prompt.style.display = 'block';
+        setTimeout(() => { prompt.style.display = 'none'; prompt.style.color = ''; prompt.style.borderColor = ''; }, 4000);
+    }
+    // Mission 6: Wind Dragons of the Veltharyn
+    if (id === 6) {
+        for (let i = 0; i < 4; i++) {
+            setTimeout(() => createWindDragonEnemy(), 1500 + i * 3000);
+        }
+        const prompt = document.getElementById('interact-prompt');
+        prompt.textContent = '\uD83C\uDF2C\uFE0F The Veltharyn descend!';
+        prompt.style.color = '#aef';
+        prompt.style.borderColor = '#aef';
         prompt.style.display = 'block';
         setTimeout(() => { prompt.style.display = 'none'; prompt.style.color = ''; prompt.style.borderColor = ''; }, 4000);
     }
@@ -1693,10 +2510,36 @@ const thornwoodMagicLines = [
 ];
 let magicDialoguePage = 0;
 let magicDialogueOpen = false;
+let magicWaterDemoShown = false;
+let magicDemoTimer = null;
+
+function speakMagicLine(text) {
+    if (!magicDialogueOpen) return;
+    if (!('speechSynthesis' in window) || typeof SpeechSynthesisUtterance === 'undefined') return;
+
+    const cleanText = text.replace(/\[/g, '').replace(/\]/g, '');
+    const synth = window.speechSynthesis;
+    synth.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.lang = 'en-US';
+    utterance.rate = 0.94;
+    utterance.pitch = 0.90;
+    utterance.volume = 1.0;
+
+    const voices = synth.getVoices();
+    const preferredVoice = voices.find(v => /en/i.test(v.lang) && /david|mark|james|guy|male/i.test(v.name))
+        || voices.find(v => /en/i.test(v.lang));
+    if (preferredVoice) utterance.voice = preferredVoice;
+
+    synth.speak(utterance);
+}
 
 function openMagicDialogue() {
     magicDialoguePage = 0;
     magicDialogueOpen = true;
+    magicWaterDemoShown = false;
+    if ('speechSynthesis' in window) window.speechSynthesis.getVoices();
     const overlay = document.getElementById('magic-dialogue');
     overlay.style.display = 'flex';
     showMagicPage();
@@ -1707,6 +2550,17 @@ function showMagicPage() {
     document.getElementById('magic-dialogue-text').textContent = thornwoodMagicLines[magicDialoguePage];
     const btn = document.getElementById('magic-dialogue-btn');
     btn.textContent = magicDialoguePage < thornwoodMagicLines.length - 1 ? '[ Continue ]' : '[ I understand ]';
+    speakMagicLine(thornwoodMagicLines[magicDialoguePage]);
+
+    // Show combo demo in cutscene: sword slash first, then Water Slash.
+    if (magicDialoguePage === thornwoodMagicLines.length - 1 && !magicWaterDemoShown) {
+        playCutsceneSwordDemo();
+        magicDemoTimer = setTimeout(() => {
+            if (magicDialogueOpen) playCutsceneWaterSlashDemo();
+            magicDemoTimer = null;
+        }, 700);
+        magicWaterDemoShown = true;
+    }
 }
 
 function advanceMagicDialogue() {
@@ -1721,7 +2575,74 @@ function advanceMagicDialogue() {
 
 function closeMagicDialogue() {
     magicDialogueOpen = false;
+    if (magicDemoTimer) {
+        clearTimeout(magicDemoTimer);
+        magicDemoTimer = null;
+    }
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
     document.getElementById('magic-dialogue').style.display = 'none';
+}
+
+function playCutsceneSwordDemo() {
+    const root = (player.sword && player.hasSword) ? player.sword.swordRoot : null;
+    const startRotX = root ? root.rotation.x : 0;
+    const swingDuration = 280;
+    const startTime = Date.now();
+
+    const trailMat = new BABYLON.StandardMaterial('cutsceneSlashTrail_' + Date.now(), scene);
+    trailMat.diffuseColor = new BABYLON.Color3(1.0, 0.85, 0.0);
+    trailMat.emissiveColor = new BABYLON.Color3(1.0, 0.75, 0.0);
+    trailMat.alpha = 0.78;
+    trailMat.backFaceCulling = false;
+
+    const trailPieces = [];
+    const numPieces = 7;
+    for (let i = 0; i < numPieces; i++) {
+        const t = i / (numPieces - 1);
+        const sz = 0.05 + t * 0.09;
+        const p = BABYLON.MeshBuilder.CreateBox('cutsceneTrail_' + i + '_' + Date.now(),
+            { width: sz * 2.5, height: sz, depth: 0.01 }, scene);
+        p.parent = camera;
+        const arcAngle = 0.8 - t * 1.8;
+        const arcR = 0.45;
+        p.position = new BABYLON.Vector3(
+            0.30 + Math.cos(arcAngle) * arcR,
+            -0.16,
+            1.01
+        );
+        p.rotation.z = arcAngle;
+        p.material = trailMat;
+        p.isPickable = false;
+        trailPieces.push(p);
+    }
+
+    const trailBorn = Date.now();
+    const fadeTrail = () => {
+        const alpha = Math.max(0, 0.78 * (1 - (Date.now() - trailBorn) / 240));
+        trailMat.alpha = alpha;
+        if (alpha > 0) {
+            requestAnimationFrame(fadeTrail);
+        } else {
+            trailPieces.forEach(p => p.dispose());
+            trailMat.dispose();
+        }
+    };
+    requestAnimationFrame(fadeTrail);
+
+    const animateSwing = () => {
+        if (!root) return;
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min(elapsed / swingDuration, 1);
+        root.rotation.y = 0.65 - progress * 1.65;
+        root.rotation.x = startRotX - Math.sin(progress * Math.PI) * 0.16;
+        if (progress < 1) {
+            requestAnimationFrame(animateSwing);
+        } else {
+            root.rotation.y = 0.65;
+            root.rotation.x = startRotX;
+        }
+    };
+    if (root) requestAnimationFrame(animateSwing);
 }
 
 function awardWaterSlash() {
@@ -1742,6 +2663,48 @@ function awardWaterSlash() {
 
 // ===== WATER SLASH PROJECTILE =====
 const waterSlashProjectiles = [];
+const WATER_SLASH_TEXTURE_PATH = 'assets/Copilot_20260531_181340.png';
+const WATER_SPRITE_COLS = 7;
+const WATER_SPRITE_ROWS = 9;
+const WATER_FRAME_DUR = 150;
+
+function spawnWaterSlashProjectile(startPos, forward, speed, canHit = true) {
+    const now = Date.now();
+
+    const plane = BABYLON.MeshBuilder.CreatePlane('wsPlane_' + now, { width: 3.2, height: 1.5 }, scene);
+    plane.position = startPos.clone();
+    plane.position.y -= 0.25;
+    plane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
+    plane.isPickable = false;
+
+    const mat = new BABYLON.StandardMaterial('wsSpriteMat_' + now, scene);
+    const tex = new BABYLON.Texture(WATER_SLASH_TEXTURE_PATH, scene, false, true);
+    tex.hasAlpha = true;
+    tex.uScale = 1 / WATER_SPRITE_COLS;
+    tex.vScale = 1 / WATER_SPRITE_ROWS;
+    tex.uOffset = 0;
+    tex.vOffset = (WATER_SPRITE_ROWS - 1) / WATER_SPRITE_ROWS;
+
+    mat.diffuseTexture = tex;
+    mat.emissiveTexture = tex;
+    mat.useAlphaFromDiffuseTexture = true;
+    mat.disableLighting = true;
+    mat.alphaMode = BABYLON.Engine.ALPHA_ADD;
+    mat.alpha = 1.0;
+    mat.backFaceCulling = false;
+    plane.material = mat;
+
+    waterSlashProjectiles.push({
+        plane,
+        mat,
+        tex,
+        vel: forward.scale(speed),
+        born: now,
+        hit: false,
+        frame: 0,
+        canHit
+    });
+}
 
 function fireWaterSlash() {
     if (!player.hasWaterSlash) return;
@@ -1749,107 +2712,23 @@ function fireWaterSlash() {
     if (now - player.lastWaterSlash < player.waterSlashCooldown) return;
     player.lastWaterSlash = now;
 
-    // Build direction from camera
     const forward = new BABYLON.Vector3(
         Math.sin(cameraRotation.y) * Math.cos(cameraRotation.x),
         -Math.sin(cameraRotation.x),
         Math.cos(cameraRotation.y) * Math.cos(cameraRotation.x)
     );
 
-    // Root node for the projectile
-    const root = new BABYLON.TransformNode('wsRoot_' + now, scene);
-    root.position = camera.position.clone();
-    root.position.y -= 0.3;
+    spawnWaterSlashProjectile(camera.position, forward, 0.55, true);
+}
 
-    // ---- Build layered water crescent ----
-    // Core crescent: flatten a torus-like group of scaled spheres/boxes into a horizontal fan
-    const mkWaterMat = (r, g, b, em_r, em_g, em_b, alpha) => {
-        const m = new BABYLON.StandardMaterial('wsM_' + Math.random(), scene);
-        m.diffuseColor  = new BABYLON.Color3(r, g, b);
-        m.emissiveColor = new BABYLON.Color3(em_r, em_g, em_b);
-        m.alpha = alpha;
-        m.backFaceCulling = false;
-        return m;
-    };
-
-    const coreMatBright = mkWaterMat(0.5, 0.85, 1.0,  0.2, 0.6, 0.9,  0.95);
-    const coreMatMid    = mkWaterMat(0.1, 0.45, 0.9,  0.05, 0.25, 0.55, 0.85);
-    const coreMatDark   = mkWaterMat(0.0, 0.15, 0.55, 0.0, 0.08, 0.3,  0.80);
-    const foamMat       = mkWaterMat(0.8, 0.95, 1.0,  0.6, 0.85, 1.0,  0.7);
-
-    const meshes = [];
-
-    // Helper: add a box or sphere and parent to root
-    const addBox = (opts, posArr, mat, scaleArr) => {
-        const m = BABYLON.MeshBuilder.CreateBox('wsBox_' + Math.random(), opts, scene);
-        m.position = new BABYLON.Vector3(...posArr);
-        m.scaling  = new BABYLON.Vector3(...(scaleArr || [1,1,1]));
-        m.material = mat;
-        m.parent   = root;
-        m.isPickable = false;
-        meshes.push(m);
-        return m;
-    };
-    const addSph = (diam, posArr, mat, scaleArr) => {
-        const m = BABYLON.MeshBuilder.CreateSphere('wsSph_' + Math.random(), { diameter: diam, segments: 5 }, scene);
-        m.position = new BABYLON.Vector3(...posArr);
-        m.scaling  = new BABYLON.Vector3(...(scaleArr || [1,1,1]));
-        m.material = mat;
-        m.parent   = root;
-        m.isPickable = false;
-        meshes.push(m);
-        return m;
-    };
-
-    // Central arc body — wide flat crescent, Z is travel direction
-    // Main horizontal band
-    addBox({ width: 2.2, height: 0.25, depth: 0.18 }, [0, 0, 0],       coreMatMid);
-    // Upper-front bright rim
-    addBox({ width: 1.8, height: 0.12, depth: 0.10 }, [0, 0.17, 0.06], coreMatBright);
-    // Lower dark shadow
-    addBox({ width: 1.6, height: 0.10, depth: 0.10 }, [0, -0.15, 0.06], coreMatDark);
-
-    // Wing tips (angled back slightly to make crescent shape)
-    addBox({ width: 0.55, height: 0.20, depth: 0.14 }, [-1.22, 0.10, -0.10], coreMatMid,   [1, 0.7, 0.8]);
-    addBox({ width: 0.55, height: 0.20, depth: 0.14 }, [ 1.22, 0.10, -0.10], coreMatMid,   [1, 0.7, 0.8]);
-    addBox({ width: 0.30, height: 0.14, depth: 0.10 }, [-1.60, 0.12, -0.22], coreMatDark,  [1, 0.6, 0.7]);
-    addBox({ width: 0.30, height: 0.14, depth: 0.10 }, [ 1.60, 0.12, -0.22], coreMatDark,  [1, 0.6, 0.7]);
-
-    // Bright highlight spheres along arc
-    for (let i = -3; i <= 3; i++) {
-        const tx = i * 0.32;
-        const ty = 0.12 - Math.abs(i) * 0.03;
-        addSph(0.16, [tx, ty, 0.04], i % 2 === 0 ? coreMatBright : foamMat, [1.4, 0.5, 0.4]);
-    }
-
-    // Foam / splash flecks scattered around
-    const fleckPositions = [
-        [-0.9, 0.22, 0.05], [0.9, 0.22, 0.05],
-        [-0.4, 0.28, 0.02], [0.4, 0.28, 0.02],
-        [-1.4, 0.0, -0.06], [1.4, 0.0, -0.06],
-        [0.0, -0.24, 0.04], [-0.6, -0.20, 0.03], [0.6, -0.20, 0.03]
-    ];
-    fleckPositions.forEach(p => {
-        const s = 0.10 + Math.random() * 0.10;
-        addSph(s, p, foamMat, [1.2, 0.4, 0.5]);
-    });
-
-    // Orient root to face the camera's forward direction
-    root.rotation.y = cameraRotation.y;
-    root.rotation.x = cameraRotation.x;
-
-    // Velocity along forward
-    const speed = 0.55;
-    const vel = forward.scale(speed);
-
-    waterSlashProjectiles.push({
-        root,
-        meshes,
-        vel,
-        life: 1.0,
-        born: now,
-        hit: false
-    });
+function playCutsceneWaterSlashDemo() {
+    const forward = new BABYLON.Vector3(
+        Math.sin(cameraRotation.y) * Math.cos(cameraRotation.x),
+        -Math.sin(cameraRotation.x),
+        Math.cos(cameraRotation.y) * Math.cos(cameraRotation.x)
+    );
+    const origin = camera.position.add(forward.scale(1.2));
+    spawnWaterSlashProjectile(origin, forward, 0.42, false);
 }
 
 // ===== WIND DIALOGUE (after mission 2 — elves realise the player is human) =====
@@ -1869,10 +2748,15 @@ let windDialogueOpen = false;
 function openWindDialogue() {
     windDialoguePage = 0;
     windDialogueOpen = true;
+    // Teleport the player inside the house for the cutscene
+    if (!playerInsideHouse) {
+        enterHouse();
+    }
     const overlay = document.getElementById('wind-dialogue');
-    overlay.style.display = 'flex';
+    overlay.style.display = 'block';
     showWindPage();
     document.getElementById('wind-dialogue-btn').onclick = advanceWindDialogue;
+    spawnNpcWindDragon();
 }
 
 function showWindPage() {
@@ -1898,6 +2782,7 @@ function advanceWindDialogue() {
 function closeWindDialogue() {
     windDialogueOpen = false;
     document.getElementById('wind-dialogue').style.display = 'none';
+    disposeNpcWindDragon();
 }
 
 function awardWindSlash() {
@@ -1920,6 +2805,7 @@ const windSlashProjectiles = [];
 const WIND_SPRITE_COLS = 7;
 const WIND_SPRITE_ROWS = 9;
 const WIND_FRAME_DUR   = 160; // ms per frame — slightly faster than fire
+const WIND_SLASH_TEXTURE_PATH = 'assets/Copilot_20260531_085637.png';
 
 function fireWindSlash() {
     if (!player.hasWindSlash) return;
@@ -1927,8 +2813,8 @@ function fireWindSlash() {
     if (now - player.lastWindSlash < player.windSlashCooldown) return;
     player.lastWindSlash = now;
 
-    // Fire 3 blades in a fan: -22°, 0°, +22° offset from camera yaw
-    const fanAngles = [-0.38, 0, 0.38];
+    // Fire 2 blades in a fan: -13°, +13° offset from camera yaw
+    const fanAngles = [-0.22, 0.22];
     fanAngles.forEach(yawOffset => {
         const yaw = cameraRotation.y + yawOffset;
         const forward = new BABYLON.Vector3(
@@ -1937,43 +2823,43 @@ function fireWindSlash() {
             Math.cos(yaw) * Math.cos(cameraRotation.x)
         );
 
-        // Billboard plane — always faces camera
-        const plane = BABYLON.MeshBuilder.CreatePlane('windPlane_' + now + '_' + yawOffset, { width: 3.0, height: 1.8 }, scene);
+        const plane = BABYLON.MeshBuilder.CreatePlane('windPlane_' + now + '_' + yawOffset, { width: 3.6, height: 1.6 }, scene);
         plane.position = camera.position.clone();
-        plane.position.y -= 0.2;
+        plane.position.y -= 0.28;
         plane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
         plane.isPickable = false;
 
         const mat = new BABYLON.StandardMaterial('windSpriteMat_' + now + '_' + yawOffset, scene);
-        const tex = new BABYLON.Texture('assets/Copilot_20260531_085637.png', scene, false, true);
-        tex.uScale  = 1 / WIND_SPRITE_COLS;
-        tex.vScale  = 1 / WIND_SPRITE_ROWS;
-        tex.uOffset = 1 / WIND_SPRITE_COLS; // skip frame 0 (row-label column)
-        // FRONT row = top row of image (invertY=true → high V)
+        const tex = new BABYLON.Texture(WIND_SLASH_TEXTURE_PATH, scene, false, true);
+        tex.uScale = 1 / WIND_SPRITE_COLS;
+        tex.vScale = 1 / WIND_SPRITE_ROWS;
+        tex.uOffset = 0;
         tex.vOffset = (WIND_SPRITE_ROWS - 1) / WIND_SPRITE_ROWS;
-
-        mat.diffuseTexture  = tex;
-        mat.emissiveTexture = tex;
-        mat.disableLighting = true;
-        // Use alpha channel from the PNG to cut out the background
         tex.hasAlpha = true;
+
+        mat.diffuseTexture = tex;
+        mat.emissiveTexture = tex;
         mat.useAlphaFromDiffuseTexture = true;
-        mat.transparencyMode = BABYLON.Material.MATERIAL_ALPHABLEND;
+        mat.disableLighting = true;
+        mat.alphaMode = BABYLON.Engine.ALPHA_ADD;
+        mat.alpha = 1.0;
         mat.backFaceCulling = false;
         plane.material = mat;
 
         windSlashProjectiles.push({
-            plane, mat, tex,
-            vel: forward.scale(0.62),
+            plane,
+            mat,
+            tex,
+            vel: forward.scale(0.92),
             born: now,
             hit: false,
-            frame: 1  // start at 1, skipping label column
+            frame: 0
         });
     });
 }
 
 function updateWindSlashProjectiles(dt) {
-    const maxLife = (WIND_SPRITE_COLS - 1) * WIND_FRAME_DUR; // 6 usable frames (skip frame 0)
+    const maxLife = 1600; // ms — faster projectile so shorter lifetime
     for (let i = windSlashProjectiles.length - 1; i >= 0; i--) {
         const proj = windSlashProjectiles[i];
         const age = Date.now() - proj.born;
@@ -1989,17 +2875,17 @@ function updateWindSlashProjectiles(dt) {
         // Move forward
         proj.plane.position.addInPlace(proj.vel);
 
-        // Advance sprite frame — skip frame 0 (label column), loop frames 1–6
-        const frame = 1 + (Math.floor(age / WIND_FRAME_DUR) % (WIND_SPRITE_COLS - 1));
+        const frame = Math.min(WIND_SPRITE_COLS - 1, Math.floor(age / WIND_FRAME_DUR));
         if (frame !== proj.frame) {
             proj.frame = frame;
             proj.tex.uOffset = frame / WIND_SPRITE_COLS;
         }
 
-        // Fade out in last third of life
-        proj.mat.alpha = Math.min(0.92, lifeRatio * 3.0);
+        // Fade out
+        const alpha = Math.min(1, lifeRatio * 2.5);
+        proj.mat.alpha = alpha;
 
-        // Hit detection + knockback
+        // Hit detection — 1 damage (less than water's 2)
         zombies.forEach(zombie => {
             if (proj.hit || zombie.health <= 0) return;
             const dist = BABYLON.Vector3.Distance(proj.plane.position, zombie.group.position);
@@ -2007,8 +2893,7 @@ function updateWindSlashProjectiles(dt) {
                 proj.hit = true;
                 zombie.health -= 1;
                 updateZombieHealthBar(zombie);
-                const kb = proj.vel.normalize().scale(1.8);
-                zombie.group.position.addInPlace(kb);
+                createExplosion(zombie.group.position, 'white');
                 if (zombie.isNecromancer) awardDarkEnergy();
                 if (zombie.health <= 0) {
                     zombie.isDead = true;
@@ -2119,7 +3004,7 @@ function fireFireSlash() {
     plane.isPickable = false;
 
     const mat = new BABYLON.StandardMaterial('fireSpriteMat_' + now, scene);
-    const tex = new BABYLON.Texture('assets/image-1780231153255.png', scene, false, true);
+    const tex = new BABYLON.Texture('assets/Copilot_20260531_091326.png', scene, false, true);
     tex.uScale  = 1 / FIRE_SPRITE_COLS;
     tex.vScale  = 1 / FIRE_SPRITE_ROWS;
     tex.uOffset = 0; // start at frame 0, column 0
@@ -2261,7 +3146,7 @@ function fireDarkEnergy() {
     plane.isPickable = false;
 
     const spriteMat = new BABYLON.StandardMaterial('darkSpriteMat_' + now, scene);
-    const tex = new BABYLON.Texture('assets/Copilot_20260531_091326.png', scene, false, true);
+    const tex = new BABYLON.Texture('assets/Copilot_20260531_182230.png', scene, false, true);
     tex.uScale  = 1 / DARK_SPRITE_COLS;
     tex.vScale  = 1 / DARK_SPRITE_ROWS;
     tex.uOffset = 0;
@@ -2360,14 +3245,20 @@ function spawnNpcFireDragon() {
 
     const mat = new BABYLON.StandardMaterial('npcDragonMat', scene);
     const tex = new BABYLON.Texture('assets/dragon_fire.png', scene, false, true);
+    tex.hasAlpha = true;
+    tex.getAlphaFromRGB = true;
     tex.uScale  = 1 / DRAGON_COLS;
     tex.vScale  = 1 / DRAGON_ROWS;
     tex.uOffset = 0;
     tex.vOffset = DRAGON_ROW.IDLE;
     mat.diffuseTexture = tex;
+    mat.opacityTexture = tex;
+    mat.emissiveTexture = tex;
     mat.useAlphaFromDiffuseTexture = true;
+    mat.transparencyMode = BABYLON.Material.MATERIAL_ALPHATESTANDBLEND;
+    mat.alphaCutOff = 0.22;
     mat.backFaceCulling = false;
-    mat.disableLighting = false;
+    mat.disableLighting = true;
     plane.material = mat;
 
     npcFireDragon = { plane, mat, tex, frame: 0, born: Date.now(), state: 'idle' };
@@ -2409,6 +3300,221 @@ function updateNpcFireDragon() {
     }
 }
 
+// ===== WIND DRAGON SPRITE =====
+const WIND_DRAGON_COLS      = 4;
+const WIND_DRAGON_ROWS      = 12;
+const WIND_DRAGON_FRAME_DUR = 130; // ms per frame
+// Skip col 0 (label column) — usable frames: 1-3
+const WIND_DRAGON_ROW = {
+    FRONT: (WIND_DRAGON_ROWS - 1) / WIND_DRAGON_ROWS, // top row
+};
+
+// ---- NPC Wind Dragon (visible during wind dialogue) ----
+let npcWindDragon = null;
+
+function spawnNpcWindDragon() {
+    if (npcWindDragon) return;
+    const yaw = cameraRotation.y;
+    const pos = camera.position.clone();
+    pos.x += Math.sin(yaw) * 10;
+    pos.y  = 1.5;
+    pos.z += Math.cos(yaw) * 10;
+
+    const plane = BABYLON.MeshBuilder.CreatePlane('npcWindDragonPlane', { width: 7, height: 5 }, scene);
+    plane.position = pos;
+    plane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_Y;
+    plane.isPickable = false;
+
+    const mat = new BABYLON.StandardMaterial('npcWindDragonMat', scene);
+    const tex = new BABYLON.Texture('assets/Copilot_20260531_181340.png', scene, false, true);
+    tex.hasAlpha = true;
+    tex.getAlphaFromRGB = true;
+    tex.uScale  = 1 / WIND_DRAGON_COLS;
+    tex.vScale  = 1 / WIND_DRAGON_ROWS;
+    tex.uOffset = 1 / WIND_DRAGON_COLS; // skip label column
+    tex.vOffset = WIND_DRAGON_ROW.FRONT;
+    mat.diffuseTexture = tex;
+    mat.opacityTexture = tex;
+    mat.emissiveTexture = tex;
+    mat.useAlphaFromDiffuseTexture = true;
+    mat.transparencyMode = BABYLON.Material.MATERIAL_ALPHATESTANDBLEND;
+    mat.alphaCutOff = 0.22;
+    mat.backFaceCulling = false;
+    mat.disableLighting = true;
+    plane.material = mat;
+
+    npcWindDragon = { plane, mat, tex, frame: 1, born: Date.now() };
+}
+
+function disposeNpcWindDragon() {
+    if (!npcWindDragon) return;
+    npcWindDragon.plane.dispose();
+    npcWindDragon.mat.dispose();
+    npcWindDragon = null;
+}
+
+function updateNpcWindDragon() {
+    if (!npcWindDragon) return;
+    const age   = Date.now() - npcWindDragon.born;
+    // Loop frames 1-3 (skip frame 0)
+    const frame = 1 + (Math.floor(age / WIND_DRAGON_FRAME_DUR) % (WIND_DRAGON_COLS - 1));
+    if (frame !== npcWindDragon.frame) {
+        npcWindDragon.frame = frame;
+        npcWindDragon.tex.uOffset = frame / WIND_DRAGON_COLS;
+    }
+}
+
+// ---- Enemy Wind Dragons ----
+function createStylizedDragonModel(parent, variant) {
+    const isFire = variant === 'fire';
+
+    const bodyMat = new BABYLON.StandardMaterial('dBody_' + Math.random(), scene);
+    bodyMat.diffuseColor = isFire
+        ? new BABYLON.Color3(0.45, 0.06, 0.05)
+        : new BABYLON.Color3(0.06, 0.26, 0.62);
+    bodyMat.emissiveColor = isFire
+        ? new BABYLON.Color3(0.18, 0.02, 0.01)
+        : new BABYLON.Color3(0.02, 0.10, 0.24);
+
+    const wingMat = new BABYLON.StandardMaterial('dWing_' + Math.random(), scene);
+    wingMat.diffuseColor = isFire
+        ? new BABYLON.Color3(0.08, 0.04, 0.04)
+        : new BABYLON.Color3(0.02, 0.14, 0.34);
+    wingMat.emissiveColor = isFire
+        ? new BABYLON.Color3(0.14, 0.06, 0.03)
+        : new BABYLON.Color3(0.02, 0.14, 0.28);
+
+    const eyeMat = new BABYLON.StandardMaterial('dEye_' + Math.random(), scene);
+    eyeMat.diffuseColor = isFire
+        ? new BABYLON.Color3(1.0, 0.42, 0.1)
+        : new BABYLON.Color3(0.35, 0.85, 1.0);
+    eyeMat.emissiveColor = isFire
+        ? new BABYLON.Color3(0.75, 0.22, 0.06)
+        : new BABYLON.Color3(0.18, 0.54, 0.82);
+
+    const core = new BABYLON.TransformNode('dragonCore_' + Math.random(), scene);
+    core.parent = parent;
+    core.position.y = 1.5;
+
+    const torso = BABYLON.MeshBuilder.CreateBox('dragonTorso_' + Math.random(), { width: 1.7, height: 0.8, depth: 2.2 }, scene);
+    torso.parent = core;
+    torso.material = bodyMat;
+
+    const neck = BABYLON.MeshBuilder.CreateBox('dragonNeck_' + Math.random(), { width: 0.7, height: 0.5, depth: 0.9 }, scene);
+    neck.parent = core;
+    neck.position = new BABYLON.Vector3(0, 0.15, 1.45);
+    neck.material = bodyMat;
+
+    const head = BABYLON.MeshBuilder.CreateBox('dragonHead_' + Math.random(), { width: 0.9, height: 0.55, depth: 0.95 }, scene);
+    head.parent = core;
+    head.position = new BABYLON.Vector3(0, 0.22, 2.05);
+    head.material = bodyMat;
+
+    const eyeL = BABYLON.MeshBuilder.CreateBox('dragonEyeL_' + Math.random(), { width: 0.12, height: 0.12, depth: 0.05 }, scene);
+    eyeL.parent = core;
+    eyeL.position = new BABYLON.Vector3(-0.22, 0.26, 2.48);
+    eyeL.material = eyeMat;
+    const eyeR = BABYLON.MeshBuilder.CreateBox('dragonEyeR_' + Math.random(), { width: 0.12, height: 0.12, depth: 0.05 }, scene);
+    eyeR.parent = core;
+    eyeR.position = new BABYLON.Vector3(0.22, 0.26, 2.48);
+    eyeR.material = eyeMat;
+
+    const tail = BABYLON.MeshBuilder.CreateBox('dragonTail_' + Math.random(), { width: 0.55, height: 0.40, depth: 1.9 }, scene);
+    tail.parent = core;
+    tail.position = new BABYLON.Vector3(0, -0.05, -1.95);
+    tail.material = bodyMat;
+
+    const wingRootL = new BABYLON.TransformNode('dragonWingRootL_' + Math.random(), scene);
+    wingRootL.parent = core;
+    wingRootL.position = new BABYLON.Vector3(-0.88, 0.24, -0.08);
+    const wingL = BABYLON.MeshBuilder.CreateBox('dragonWingL_' + Math.random(), { width: 2.2, height: 0.10, depth: 1.35 }, scene);
+    wingL.parent = wingRootL;
+    wingL.position = new BABYLON.Vector3(-1.05, 0, 0.02);
+    wingL.material = wingMat;
+
+    const wingRootR = new BABYLON.TransformNode('dragonWingRootR_' + Math.random(), scene);
+    wingRootR.parent = core;
+    wingRootR.position = new BABYLON.Vector3(0.88, 0.24, -0.08);
+    const wingR = BABYLON.MeshBuilder.CreateBox('dragonWingR_' + Math.random(), { width: 2.2, height: 0.10, depth: 1.35 }, scene);
+    wingR.parent = wingRootR;
+    wingR.position = new BABYLON.Vector3(1.05, 0, 0.02);
+    wingR.material = wingMat;
+
+    const legL = BABYLON.MeshBuilder.CreateBox('dragonLegL_' + Math.random(), { width: 0.28, height: 0.42, depth: 0.32 }, scene);
+    legL.parent = core;
+    legL.position = new BABYLON.Vector3(-0.34, -0.55, 0.4);
+    legL.material = bodyMat;
+    const legR = BABYLON.MeshBuilder.CreateBox('dragonLegR_' + Math.random(), { width: 0.28, height: 0.42, depth: 0.32 }, scene);
+    legR.parent = core;
+    legR.position = new BABYLON.Vector3(0.34, -0.55, 0.4);
+    legR.material = bodyMat;
+
+    return { core, wingRootL, wingRootR, tail, head, neck };
+}
+
+function createWindDragonEnemy() {
+    let spawnPos;
+    do {
+        const angle = Math.random() * Math.PI * 2;
+        spawnPos = new BABYLON.Vector3(
+            camera.position.x + Math.cos(angle) * 28,
+            1,
+            camera.position.z + Math.sin(angle) * 28
+        );
+    } while (nearHouse(spawnPos.x, spawnPos.z) || isInRiver(spawnPos.x, spawnPos.z, 3));
+
+    const g = new BABYLON.TransformNode('windDragonGroup_' + Date.now(), scene);
+    g.position = spawnPos;
+    const model = createStylizedDragonModel(g, 'ice');
+
+    const dragon = {
+        group: g,
+        health: 15, maxHealth: 15,
+        speed: 0.06, // faster than fire dragons
+        isWindDragon: true,
+        isDead: false,
+        animationState: 'walk',
+        animationTimer: 0,
+        animationSpeed: 0,
+        deathTimer: 0,
+        frame: 1, frameBorn: Date.now(),
+        healthBar: null,
+        model,
+        head: { position: { y: 0 } },
+        armLeft: g, armRight: g,
+        fistLeft: g, fistRight: g,
+        legLeft: g, legRight: g,
+        bootLeft: g, bootRight: g,
+    };
+    dragon.healthBar = createZombieHealthBar(dragon);
+    updateZombieHealthBar(dragon);
+    zombies.push(dragon);
+}
+
+function updateWindDragonSprites(dt) {
+    zombies.forEach(dragon => {
+        if (!dragon.isWindDragon) return;
+        if (dragon.model) {
+            const t = Date.now() * 0.008;
+            dragon.model.wingRootL.rotation.z = -0.55 + Math.sin(t + dragon.group.position.x) * 0.42;
+            dragon.model.wingRootR.rotation.z = 0.55 - Math.sin(t + dragon.group.position.x) * 0.42;
+            dragon.model.tail.rotation.x = Math.sin(t * 0.6 + dragon.group.position.z) * 0.24;
+            dragon.model.neck.rotation.x = Math.sin(t * 0.5 + dragon.group.position.x) * 0.10;
+            dragon.group.position.y = 1 + Math.sin(t + dragon.group.position.x * 0.12) * 0.18;
+            return;
+        }
+        const age   = Date.now() - dragon.frameBorn;
+        // Loop frames 1-3 (skip label col 0)
+        const frame = 1 + (Math.floor(age / WIND_DRAGON_FRAME_DUR) % (WIND_DRAGON_COLS - 1));
+        if (frame !== dragon.frame) {
+            dragon.frame = frame;
+            if (dragon.tex) dragon.tex.uOffset = frame / WIND_DRAGON_COLS;
+        }
+        // All rows use same sheet — keep FRONT row
+        if (dragon.tex) dragon.tex.vOffset = WIND_DRAGON_ROW.FRONT;
+    });
+}
+
 // ---- Enemy Fire Dragons ----
 function createFireDragonEnemy() {
     let spawnPos;
@@ -2419,30 +3525,14 @@ function createFireDragonEnemy() {
             1,
             camera.position.z + Math.sin(angle) * 30
         );
-    } while (nearHouse(spawnPos.x, spawnPos.z));
+    } while (nearHouse(spawnPos.x, spawnPos.z) || isInRiver(spawnPos.x, spawnPos.z, 3));
 
     const g = new BABYLON.TransformNode('fireDragonGroup_' + Date.now(), scene);
     g.position = spawnPos;
-
-    const plane = BABYLON.MeshBuilder.CreatePlane('fireDragonPlane_' + Date.now(), { width: 4.5, height: 3.0 }, scene);
-    plane.position.y = 1.5;
-    plane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_Y;
-    plane.isPickable = false;
-    plane.parent = g;
-
-    const mat = new BABYLON.StandardMaterial('fireDragonMat_' + Date.now(), scene);
-    const tex = new BABYLON.Texture('assets/dragon_fire.png', scene, false, true);
-    tex.uScale  = 1 / DRAGON_COLS;
-    tex.vScale  = 1 / DRAGON_ROWS;
-    tex.uOffset = 0;
-    tex.vOffset = DRAGON_ROW.IDLE;
-    mat.diffuseTexture = tex;
-    mat.useAlphaFromDiffuseTexture = true;
-    mat.backFaceCulling = false;
-    plane.material = mat;
+    const model = createStylizedDragonModel(g, 'fire');
 
     const dragon = {
-        group: g, plane, mat, tex,
+        group: g,
         health: 20, maxHealth: 20,
         speed: 0.045,
         isFireDragon: true,
@@ -2454,6 +3544,7 @@ function createFireDragonEnemy() {
         frame: 0, frameBorn: Date.now(),
         spriteRow: DRAGON_ROW.IDLE,
         healthBar: null,
+        model,
         // stub limbs (updateZombieAnimation guards these)
         head: { position: { y: 0 } },
         armLeft: g, armRight: g,
@@ -2469,6 +3560,15 @@ function createFireDragonEnemy() {
 function updateFireDragonSprites(dt) {
     zombies.forEach(dragon => {
         if (!dragon.isFireDragon) return;
+        if (dragon.model) {
+            const t = Date.now() * 0.0085;
+            dragon.model.wingRootL.rotation.z = -0.55 + Math.sin(t + dragon.group.position.x) * 0.38;
+            dragon.model.wingRootR.rotation.z = 0.55 - Math.sin(t + dragon.group.position.x) * 0.38;
+            dragon.model.tail.rotation.x = Math.sin(t * 0.7 + dragon.group.position.z) * 0.20;
+            dragon.model.neck.rotation.x = Math.sin(t * 0.6 + dragon.group.position.x) * 0.09;
+            dragon.group.position.y = 1 + Math.sin(t + dragon.group.position.z * 0.14) * 0.15;
+            return;
+        }
         if (dragon.health <= 0) {
             // death animation
             dragon.spriteRow = DRAGON_ROW.DEATH;
@@ -2488,47 +3588,53 @@ function updateFireDragonSprites(dt) {
 }
 
 function updateWaterSlashProjectiles(dt) {
-    const maxLife = 2200; // ms
+    const maxLife = WATER_SPRITE_COLS * WATER_FRAME_DUR;
     for (let i = waterSlashProjectiles.length - 1; i >= 0; i--) {
         const proj = waterSlashProjectiles[i];
         const age = Date.now() - proj.born;
         const lifeRatio = 1 - age / maxLife;
 
         if (proj.hit || lifeRatio <= 0) {
-            proj.meshes.forEach(m => m.dispose());
-            proj.root.dispose();
+            proj.plane.dispose();
+            proj.mat.dispose();
             waterSlashProjectiles.splice(i, 1);
             continue;
         }
 
         // Move forward
-        proj.root.position.addInPlace(proj.vel);
+        proj.plane.position.addInPlace(proj.vel);
 
-        // Slight spin for visual flair
-        proj.root.rotation.z += 0.018;
+        const frame = Math.min(WATER_SPRITE_COLS - 1, Math.floor(age / WATER_FRAME_DUR));
+        if (frame !== proj.frame) {
+            proj.frame = frame;
+            proj.tex.uOffset = frame / WATER_SPRITE_COLS;
+        }
 
         // Fade out as it travels
         const alpha = Math.min(1, lifeRatio * 2.5);
-        proj.meshes.forEach(m => {
-            if (m.material) m.material.alpha = Math.max(0, m.material.alpha * 0.998) * alpha;
-        });
+        proj.mat.alpha = alpha;
 
-        // Hit detection
-        zombies.forEach(zombie => {
-            if (proj.hit || zombie.health <= 0) return;
-            const dist = BABYLON.Vector3.Distance(proj.root.position, zombie.group.position);
-            if (dist < 1.6) {
-                proj.hit = true;
-                zombie.health -= 2;
-                updateZombieHealthBar(zombie);
-                createExplosion(zombie.group.position, 'blue');
-                if (zombie.isNecromancer) awardDarkEnergy();
-                if (zombie.health <= 0) {
-                    zombie.isDead = true;
-                    onZombieKilled();
+        if (proj.canHit) {
+            // Hit detection
+            zombies.forEach(zombie => {
+                if (proj.hit || zombie.health <= 0) return;
+                const dist = BABYLON.Vector3.Distance(proj.plane.position, zombie.group.position);
+                if (dist < 1.6) {
+                    proj.hit = true;
+                    const nearRiver = isInRiver(camera.position.x, camera.position.z, 8)
+                        || isInRiver(zombie.group.position.x, zombie.group.position.z, 8);
+                    const waterDamage = nearRiver ? 3 : 2;
+                    zombie.health -= waterDamage;
+                    updateZombieHealthBar(zombie);
+                    createExplosion(zombie.group.position, 'blue');
+                    if (zombie.isNecromancer) awardDarkEnergy();
+                    if (zombie.health <= 0) {
+                        zombie.isDead = true;
+                        onZombieKilled();
+                    }
                 }
-            }
-        });
+            });
+        }
     }
 
     // Update cooldown display
@@ -2684,22 +3790,19 @@ function startKingSwoopCutscene() {
 // Function to update elf animation
 // ===== ZOMBIE ANIMATION =====
 function updateZombieAnimation(zombie, deltaTime) {
-    if (zombie.isFireDragon) return; // sprite-based, handled by updateFireDragonSprites
+    if (zombie.isFireDragon || zombie.isWindDragon) return; // sprite-based
     zombie.animationTimer += deltaTime * zombie.animationSpeed;
     const t = zombie.animationTimer;
+    const hasPart = (part) => zombie[part] && zombie[part].position;
 
     // Cache original positions once
     if (!zombie._origPos) {
-        zombie._origPos = {
-            armLeft:  zombie.armLeft.position.clone(),
-            armRight: zombie.armRight.position.clone(),
-            fistLeft:  zombie.fistLeft.position.clone(),
-            fistRight: zombie.fistRight.position.clone(),
-            legLeft:  zombie.legLeft.position.clone(),
-            legRight: zombie.legRight.position.clone(),
-            bootLeft:  zombie.bootLeft.position.clone(),
-            bootRight: zombie.bootRight.position.clone(),
-        };
+        zombie._origPos = {};
+        ['armLeft', 'armRight', 'fistLeft', 'fistRight', 'legLeft', 'legRight', 'bootLeft', 'bootRight'].forEach((part) => {
+            if (hasPart(part)) {
+                zombie._origPos[part] = zombie[part].position.clone();
+            }
+        });
         zombie._baseY = zombie.group.position.y;
     }
     const o = zombie._origPos;
@@ -2707,50 +3810,66 @@ function updateZombieAnimation(zombie, deltaTime) {
     if (zombie.animationState === 'idle') {
         // Gentle sway, arms slightly raised forward
         const sway = Math.sin(t * 0.4) * 0.015;
-        zombie.head.position.y = 1.52 + sway;
-        zombie.armLeft.position.z  = o.armLeft.z  + 0.14;
-        zombie.armRight.position.z = o.armRight.z + 0.14;
-        zombie.fistLeft.position.z  = o.fistLeft.z  + 0.14;
-        zombie.fistRight.position.z = o.fistRight.z + 0.14;
+        if (zombie.head && zombie.head.position) zombie.head.position.y = 1.52 + sway;
+        if (hasPart('armLeft') && o.armLeft) zombie.armLeft.position.z = o.armLeft.z + 0.14;
+        if (hasPart('armRight') && o.armRight) zombie.armRight.position.z = o.armRight.z + 0.14;
+        if (hasPart('fistLeft') && o.fistLeft) zombie.fistLeft.position.z = o.fistLeft.z + 0.14;
+        if (hasPart('fistRight') && o.fistRight) zombie.fistRight.position.z = o.fistRight.z + 0.14;
 
     } else if (zombie.animationState === 'walk') {
         // Lurching zombie walk — arms outstretched and swinging alternately
         const swing = Math.sin(t);
         // Left arm forward / right arm back, then swap
-        zombie.armLeft.position.z  = o.armLeft.z  + 0.26 + swing * 0.20;
-        zombie.armLeft.position.y  = o.armLeft.y  + swing * 0.05;
-        zombie.fistLeft.position.z  = o.fistLeft.z  + 0.26 + swing * 0.20;
-        zombie.fistLeft.position.y  = o.fistLeft.y  + swing * 0.05;
+        if (hasPart('armLeft') && o.armLeft) {
+            zombie.armLeft.position.z = o.armLeft.z + 0.26 + swing * 0.20;
+            zombie.armLeft.position.y = o.armLeft.y + swing * 0.05;
+        }
+        if (hasPart('fistLeft') && o.fistLeft) {
+            zombie.fistLeft.position.z = o.fistLeft.z + 0.26 + swing * 0.20;
+            zombie.fistLeft.position.y = o.fistLeft.y + swing * 0.05;
+        }
 
-        zombie.armRight.position.z  = o.armRight.z  + 0.26 - swing * 0.20;
-        zombie.armRight.position.y  = o.armRight.y  - swing * 0.05;
-        zombie.fistRight.position.z  = o.fistRight.z  + 0.26 - swing * 0.20;
-        zombie.fistRight.position.y  = o.fistRight.y  - swing * 0.05;
+        if (hasPart('armRight') && o.armRight) {
+            zombie.armRight.position.z = o.armRight.z + 0.26 - swing * 0.20;
+            zombie.armRight.position.y = o.armRight.y - swing * 0.05;
+        }
+        if (hasPart('fistRight') && o.fistRight) {
+            zombie.fistRight.position.z = o.fistRight.z + 0.26 - swing * 0.20;
+            zombie.fistRight.position.y = o.fistRight.y - swing * 0.05;
+        }
 
         // Legs stride
-        zombie.legLeft.position.z   = o.legLeft.z  + swing * 0.10;
-        zombie.legRight.position.z  = o.legRight.z - swing * 0.10;
-        zombie.bootLeft.position.z  = o.bootLeft.z  + swing * 0.10;
-        zombie.bootRight.position.z = o.bootRight.z - swing * 0.10;
+        if (hasPart('legLeft') && o.legLeft) zombie.legLeft.position.z = o.legLeft.z + swing * 0.10;
+        if (hasPart('legRight') && o.legRight) zombie.legRight.position.z = o.legRight.z - swing * 0.10;
+        if (hasPart('bootLeft') && o.bootLeft) zombie.bootLeft.position.z = o.bootLeft.z + swing * 0.10;
+        if (hasPart('bootRight') && o.bootRight) zombie.bootRight.position.z = o.bootRight.z - swing * 0.10;
         // Slight up/down body bob
         zombie.group.position.y = (zombie._baseY || 1) - Math.abs(swing) * 0.04;
 
     } else if (zombie.animationState === 'attack') {
         // Both arms lunge hard forward, body dips
         const lunge = Math.abs(Math.sin(t * 1.8));
-        zombie.armLeft.position.z   = o.armLeft.z   + 0.20 + lunge * 0.36;
-        zombie.armRight.position.z  = o.armRight.z  + 0.20 + lunge * 0.36;
-        zombie.fistLeft.position.z  = o.fistLeft.z  + 0.20 + lunge * 0.36;
-        zombie.fistRight.position.z = o.fistRight.z + 0.20 + lunge * 0.36;
-        zombie.armLeft.position.y   = o.armLeft.y   - lunge * 0.10;
-        zombie.armRight.position.y  = o.armRight.y  - lunge * 0.10;
-        zombie.fistLeft.position.y  = o.fistLeft.y  - lunge * 0.10;
-        zombie.fistRight.position.y = o.fistRight.y - lunge * 0.10;
+        if (hasPart('armLeft') && o.armLeft) {
+            zombie.armLeft.position.z = o.armLeft.z + 0.20 + lunge * 0.36;
+            zombie.armLeft.position.y = o.armLeft.y - lunge * 0.10;
+        }
+        if (hasPart('armRight') && o.armRight) {
+            zombie.armRight.position.z = o.armRight.z + 0.20 + lunge * 0.36;
+            zombie.armRight.position.y = o.armRight.y - lunge * 0.10;
+        }
+        if (hasPart('fistLeft') && o.fistLeft) {
+            zombie.fistLeft.position.z = o.fistLeft.z + 0.20 + lunge * 0.36;
+            zombie.fistLeft.position.y = o.fistLeft.y - lunge * 0.10;
+        }
+        if (hasPart('fistRight') && o.fistRight) {
+            zombie.fistRight.position.z = o.fistRight.z + 0.20 + lunge * 0.36;
+            zombie.fistRight.position.y = o.fistRight.y - lunge * 0.10;
+        }
         // Reset legs
-        zombie.legLeft.position.z  = o.legLeft.z;
-        zombie.legRight.position.z = o.legRight.z;
-        zombie.bootLeft.position.z  = o.bootLeft.z;
-        zombie.bootRight.position.z = o.bootRight.z;
+        if (hasPart('legLeft') && o.legLeft) zombie.legLeft.position.z = o.legLeft.z;
+        if (hasPart('legRight') && o.legRight) zombie.legRight.position.z = o.legRight.z;
+        if (hasPart('bootLeft') && o.bootLeft) zombie.bootLeft.position.z = o.bootLeft.z;
+        if (hasPart('bootRight') && o.bootRight) zombie.bootRight.position.z = o.bootRight.z;
 
     } else if (zombie.animationState === 'death') {
         // Topple forward
@@ -2838,10 +3957,116 @@ function updateElfAnimation(elf, deltaTime) {
     }
 }
 
+function updateElfJumpAndSwim(elf, deltaMs) {
+    if (!elf || !elf.group) return;
+
+    const inRiver = isInRiver(elf.group.position.x, elf.group.position.z, 0.8);
+
+    if (elf.canJump) {
+        if (!elf.isJumping) {
+            elf.jumpCooldown = (elf.jumpCooldown || 0) - deltaMs;
+            const jumpChance = inRiver ? 0.018 : 0.0035;
+            if (elf.jumpCooldown <= 0 && Math.random() < jumpChance) {
+                elf.isJumping = true;
+                elf.jumpVelocity = inRiver ? 0.13 : 0.09;
+                elf.jumpCooldown = inRiver ? 700 : 1300;
+            }
+        }
+
+        if (elf.isJumping) {
+            elf.jumpHeight = (elf.jumpHeight || 0) + elf.jumpVelocity;
+            elf.jumpVelocity -= 0.008;
+            if (elf.jumpHeight <= 0) {
+                elf.jumpHeight = 0;
+                elf.isJumping = false;
+            }
+        }
+    }
+
+    if (elf.animationState === 'death') return;
+
+    const swimBob = inRiver
+        ? Math.sin(Date.now() * 0.009 + (elf.isKing ? 1.8 : 0)) * 0.08
+        : Math.sin(Date.now() * 0.0012 + (elf.isKing ? 0.5 : 0)) * 0.06;
+    const baseY = inRiver ? 0.82 : 1;
+    elf.group.position.y = baseY + swimBob + (elf.jumpHeight || 0);
+}
+
 // Movement system
 const keys = {};
+const dragonDebugShortcut = {
+    dTapCount: 0,
+    lastDTapAt: 0,
+    armedUntil: 0
+};
+function clearGameplayInput() {
+    Object.keys(keys).forEach((k) => {
+        keys[k] = false;
+    });
+}
+
+function isMissionBlockedGameplayKey(e) {
+    const key = e.key.toLowerCase();
+    return key === 'w' || key === 'a' || key === 's' || key === 'd' ||
+        key === 'arrowup' || key === 'arrowdown' || key === 'arrowleft' || key === 'arrowright' ||
+        e.code === 'Space';
+}
+
 window.addEventListener('keydown', (e) => {
-    keys[e.key.toLowerCase()] = true;
+    // Debug spawn shortcuts:
+    // D + D + 1 => Fire Dragon
+    // D + D + 2 => Wind Dragon
+    const lowerKey = e.key.toLowerCase();
+    const now = Date.now();
+
+    if (lowerKey === 'd' && !e.repeat) {
+        if (now - dragonDebugShortcut.lastDTapAt <= 450) {
+            dragonDebugShortcut.dTapCount += 1;
+        } else {
+            dragonDebugShortcut.dTapCount = 1;
+        }
+        dragonDebugShortcut.lastDTapAt = now;
+
+        // Arm combo for a short window after double tapping D
+        if (dragonDebugShortcut.dTapCount >= 2) {
+            dragonDebugShortcut.armedUntil = now + 1200;
+            dragonDebugShortcut.dTapCount = 0;
+        }
+    }
+
+    const dragonComboArmed = now <= dragonDebugShortcut.armedUntil;
+    if (dragonComboArmed && (e.code === 'Digit1' || e.code === 'Digit2')) {
+        e.preventDefault();
+        dragonDebugShortcut.armedUntil = 0;
+        if (e.code === 'Digit1') {
+            createFireDragonEnemy();
+        } else {
+            createWindDragonEnemy();
+        }
+
+        const prompt = document.getElementById('interact-prompt');
+        if (prompt) {
+            prompt.textContent = e.code === 'Digit1'
+                ? '🐉 Debug: Fire Dragon spawned (D + D + 1)'
+                : '🐉 Debug: Wind Dragon spawned (D + D + 2)';
+            prompt.style.color = '#9fd3ff';
+            prompt.style.borderColor = '#9fd3ff';
+            prompt.style.display = 'block';
+            setTimeout(() => {
+                prompt.style.display = 'none';
+                prompt.style.color = '';
+                prompt.style.borderColor = '';
+            }, 1200);
+        }
+        return;
+    }
+
+    if (missionUIOpen && isMissionBlockedGameplayKey(e)) {
+        e.preventDefault();
+        return;
+    }
+
+    keys[lowerKey] = true;
     // Jump on spacebar
     if (e.code === 'Space' && !player.isJumping) {
         player.isJumping = true;
@@ -2877,6 +4102,12 @@ window.addEventListener('keydown', (e) => {
 });
 
 window.addEventListener('keyup', (e) => {
+    if (missionUIOpen && isMissionBlockedGameplayKey(e)) {
+        e.preventDefault();
+        keys[e.key.toLowerCase()] = false;
+        return;
+    }
+
     keys[e.key.toLowerCase()] = false;
     // F key release: tap = sword, hold = dark energy
     if (e.code === 'KeyF') {
@@ -2917,75 +4148,61 @@ window.addEventListener('keyup', (e) => {
     }
 });
 
-// Function to create explosion effect when zombie dies
-function createExplosion(position, zombieType) {
-    const explosionParticles = [];
-    const particleCount = 16;
-    
-    // Get zombie color for explosion
-    const colors = {
-        green: '#66BB6A',
-        blue: '#42A5F5',
-        purple: '#CE93D8'
-    };
-    const color = colors[zombieType] || colors.green;
-    
-    // Create particles that shoot outward
+// Shared explosion materials (created once, reused across all explosions)
+const _explosionMats = {};
+function _getExplosionMat(colorKey) {
+    if (_explosionMats[colorKey]) return _explosionMats[colorKey];
+    const hexMap = { green: '#66BB6A', blue: '#42A5F5', purple: '#CE93D8', white: '#D8EEFF' };
+    const hex = hexMap[colorKey] || hexMap.green;
+    const m = new BABYLON.StandardMaterial('_expMat_' + colorKey, scene);
+    const c = BABYLON.Color3.FromHexString(hex);
+    m.diffuseColor  = c;
+    m.emissiveColor = c.scale(1.2);
+    m.backFaceCulling = false;
+    _explosionMats[colorKey] = m;
+    return m;
+}
+
+// Active explosion particles — updated in the render loop (no setInterval)
+const activeExplosions = [];
+
+function createExplosion(position, colorKey) {
+    const particleCount = 8; // half as many — still looks good
+    const mat = _getExplosionMat(colorKey || 'green');
     for (let i = 0; i < particleCount; i++) {
         const angle = (Math.PI * 2 * i) / particleCount;
-        const speed = 0.25 + Math.random() * 0.15;
-        
-        const particle = BABYLON.MeshBuilder.CreateSphere('explosion_' + Math.random(), { diameter: 0.5, segments: 8 }, scene);
-        particle.position = position.clone();
-        
-        // Create material for particle
-        const mat = new BABYLON.StandardMaterial('explosionMat_' + Math.random(), scene);
-        mat.diffuse = new BABYLON.Color3.FromHexString(color);
-        mat.emissiveColor = new BABYLON.Color3.FromHexString(color).scale(1.2);
-        mat.alpha = 1.0;
-        particle.material = mat;
-        
-        // Store particle data
-        explosionParticles.push({
-            mesh: particle,
-            velocity: new BABYLON.Vector3(
-                Math.cos(angle) * speed,
-                0.3 + Math.random() * 0.15,
-                Math.sin(angle) * speed
-            ),
-            life: 1.0,
-            maxLife: 1.0
+        const speed = 0.22 + Math.random() * 0.14;
+        const mesh = BABYLON.MeshBuilder.CreateBox('_exp_' + Math.random(), { size: 0.35 }, scene);
+        mesh.position.copyFrom(position);
+        mesh.material = mat;
+        mesh.isPickable = false;
+        activeExplosions.push({
+            mesh,
+            vx: Math.cos(angle) * speed,
+            vy: 0.28 + Math.random() * 0.12,
+            vz: Math.sin(angle) * speed,
+            life: 1.0
         });
     }
-    
-    // Animate particles in render loop
-    let animationStartTime = Date.now();
-    const particleAnimations = setInterval(() => {
-        let allDead = true;
-        
-        explosionParticles.forEach(p => {
-            if (p.life > 0) {
-                allDead = false;
-                p.mesh.position.addInPlace(p.velocity);
-                p.velocity.y -= 0.015; // gravity
-                p.life -= 0.04;
-                
-                // Fade out
-                if (p.mesh.material) {
-                    p.mesh.material.alpha = Math.max(0, p.life);
-                }
-                
-                // Scale down
-                const scale = Math.max(0.1, p.life);
-                p.mesh.scaling = new BABYLON.Vector3(scale, scale, scale);
-            }
-        });
-        
-        if (allDead) {
-            clearInterval(particleAnimations);
-            explosionParticles.forEach(p => p.mesh.dispose());
+}
+
+function updateExplosions() {
+    for (let i = activeExplosions.length - 1; i >= 0; i--) {
+        const p = activeExplosions[i];
+        p.life -= 0.045;
+        if (p.life <= 0) {
+            p.mesh.dispose();
+            activeExplosions.splice(i, 1);
+            continue;
         }
-    }, 16); // ~60fps
+        p.mesh.position.x += p.vx;
+        p.mesh.position.y += p.vy;
+        p.mesh.position.z += p.vz;
+        p.vy -= 0.015;
+        const s = Math.max(0.05, p.life);
+        p.mesh.scaling.setAll(s);
+        p.mesh.material.alpha = p.life;
+    }
 }
 
 // Function to draw minimap
@@ -3116,6 +4333,66 @@ function createPlayerSword() {
         meshes: [pommel, grip, crossguard, blade, tip]
     };
     player.hasSword = true;
+}
+
+function createPlayerSwimArms() {
+    if (player.swimArms && player.swimArms.root) {
+        player.swimArms.root.dispose();
+    }
+
+    const root = new BABYLON.TransformNode('playerSwimArmsRoot', scene);
+    root.parent = camera;
+    root.position = new BABYLON.Vector3(0, -0.58, 0.60);
+
+    const skinMat = new BABYLON.StandardMaterial('swimSkinMat', scene);
+    skinMat.diffuseColor = new BABYLON.Color3(0.92, 0.66, 0.42);
+    skinMat.emissiveColor = new BABYLON.Color3(0.22, 0.12, 0.06);
+
+    const armL = BABYLON.MeshBuilder.CreateBox('swimArmL', { width: 0.14, height: 0.22, depth: 0.40 }, scene);
+    armL.parent = root;
+    armL.position = new BABYLON.Vector3(-0.24, -0.02, 0.08);
+    armL.rotation.x = -0.55;
+    armL.material = skinMat;
+    armL.isPickable = false;
+
+    const armR = BABYLON.MeshBuilder.CreateBox('swimArmR', { width: 0.14, height: 0.22, depth: 0.40 }, scene);
+    armR.parent = root;
+    armR.position = new BABYLON.Vector3(0.24, -0.02, 0.08);
+    armR.rotation.x = -0.55;
+    armR.material = skinMat;
+    armR.isPickable = false;
+
+    const handL = BABYLON.MeshBuilder.CreateBox('swimHandL', { width: 0.12, height: 0.10, depth: 0.16 }, scene);
+    handL.parent = root;
+    handL.position = new BABYLON.Vector3(-0.24, -0.12, 0.30);
+    handL.rotation.x = -0.40;
+    handL.material = skinMat;
+    handL.isPickable = false;
+
+    const handR = BABYLON.MeshBuilder.CreateBox('swimHandR', { width: 0.12, height: 0.10, depth: 0.16 }, scene);
+    handR.parent = root;
+    handR.position = new BABYLON.Vector3(0.24, -0.12, 0.30);
+    handR.rotation.x = -0.40;
+    handR.material = skinMat;
+    handR.isPickable = false;
+
+    root.setEnabled(false);
+    player.swimArms = { root, armL, armR, handL, handR };
+}
+
+function updatePlayerSwimArms() {
+    if (!player.swimArms || !player.swimArms.root) return;
+
+    const t = Date.now() * 0.006;
+    const stroke = Math.sin(t);
+
+    player.swimArms.armL.rotation.x = -0.62 + stroke * 0.26;
+    player.swimArms.armR.rotation.x = -0.62 - stroke * 0.26;
+    player.swimArms.handL.rotation.x = -0.38 + stroke * 0.18;
+    player.swimArms.handR.rotation.x = -0.38 - stroke * 0.18;
+
+    player.swimArms.armL.position.y = -0.02 + Math.abs(stroke) * 0.03;
+    player.swimArms.armR.position.y = -0.02 + Math.abs(stroke) * 0.03;
 }
 
 // Perform sword attack — diagonal slash + yellow arc trail
@@ -3460,6 +4737,7 @@ engine.runRenderLoop(() => {
                 zombie.animationState = 'death';
                 zombie.deathTimer = 0;
                 onZombieKilled();
+                if (kingDarkElfTarget === zombie) kingDarkElfTarget = null;
                 // Clear soldier reference
                 if (zombie.isSoldier) {
                     zombieSoldier = null;
@@ -3475,15 +4753,11 @@ engine.runRenderLoop(() => {
                 if (zombie.isNecromancer) {
                     necromancer = null;
                 }
-                // Fire dragon killed — longer death to show DEATH animation
-                if (zombie.isFireDragon) {
-                    // death plays for longer so sprite animation can complete
-                    zombie.deathTimer = -500;
-                }
+                // Fire/wind dragon killed — give longer death window for sprite\n                if (zombie.isFireDragon || zombie.isWindDragon) {\n                    zombie.deathTimer = -500;\n                }
             }
             zombie.deathTimer += dt;
             updateZombieAnimation(zombie, dt);
-            if (zombie.deathTimer > (zombie.isFireDragon ? DRAGON_COLS * DRAGON_FRAME_DUR : 900)) {
+            if (zombie.deathTimer > (zombie.isFireDragon || zombie.isWindDragon ? DRAGON_COLS * DRAGON_FRAME_DUR : 900)) {
                 if (zombie.healthBar && zombie.healthBar.barGroup) zombie.healthBar.barGroup.dispose();
                 zombie.group.dispose();
                 zombies.splice(index, 1);
@@ -3502,10 +4776,26 @@ engine.runRenderLoop(() => {
         const toPlayer = camera.position.subtract(zombie.group.position);
         const distance = toPlayer.length();
 
+        if (zombie.isDarkElf) {
+            const now = Date.now();
+            if (distance < 14 && now - (zombie.lastCorruptedWater || 0) > 3200) {
+                zombie.lastCorruptedWater = now;
+                spawnCorruptedWaterBolt(
+                    zombie.group.position.add(new BABYLON.Vector3(0, 0.8, 0)),
+                    camera.position.clone()
+                );
+            }
+        }
+
         if (distance > 0.5) {
             toPlayer.normalize();
-            zombie.group.position.x += toPlayer.x * baseSpeed;
-            zombie.group.position.z += toPlayer.z * baseSpeed;
+            const nextX = zombie.group.position.x + toPlayer.x * baseSpeed;
+            const nextZ = zombie.group.position.z + toPlayer.z * baseSpeed;
+            const blockedByRiver = !zombie.isDarkElf && isInRiver(nextX, nextZ, 1.4);
+            if (!blockedByRiver) {
+                zombie.group.position.x = nextX;
+                zombie.group.position.z = nextZ;
+            }
         }
 
         // Make zombie look at player
@@ -3523,8 +4813,36 @@ engine.runRenderLoop(() => {
 
         updateZombieAnimation(zombie, dt);
 
+        if (zombie.isDarkElf && zombie.health > 0 && !zombie.isDead) {
+            const inRiver = isInRiver(zombie.group.position.x, zombie.group.position.z, 0.8);
+
+            if (!zombie.isJumping) {
+                zombie.jumpCooldown = (zombie.jumpCooldown || 0) - dt;
+                const jumpChance = inRiver ? 0.02 : 0.004;
+                if (zombie.jumpCooldown <= 0 && Math.random() < jumpChance) {
+                    zombie.isJumping = true;
+                    zombie.jumpVelocity = inRiver ? 0.12 : 0.09;
+                    zombie.jumpCooldown = inRiver ? 650 : 1200;
+                }
+            }
+
+            if (zombie.isJumping) {
+                zombie.jumpHeight = (zombie.jumpHeight || 0) + zombie.jumpVelocity;
+                zombie.jumpVelocity -= 0.008;
+                if (zombie.jumpHeight <= 0) {
+                    zombie.jumpHeight = 0;
+                    zombie.isJumping = false;
+                }
+            }
+
+            const swimBob = inRiver ? Math.sin(Date.now() * 0.01 + index) * 0.07 : 0;
+            const baseY = zombie._baseY || 1;
+            zombie.group.position.y = baseY + (zombie.jumpHeight || 0) + swimBob;
+        }
+
         // Remove if too far
         if (distance > 150) {
+            if (kingDarkElfTarget === zombie) kingDarkElfTarget = null;
             if (zombie.healthBar && zombie.healthBar.barGroup) zombie.healthBar.barGroup.dispose();
             zombie.group.dispose();
             zombies.splice(index, 1);
@@ -3547,6 +4865,39 @@ engine.runRenderLoop(() => {
             const campCenter = campGroup ? campGroup.position : new BABYLON.Vector3(HOUSE_POS.x, 0, HOUSE_POS.z);
 
             if (elf.isKing) {
+                if (kingDarkElfTarget && kingDarkElfTarget.health > 0 && !kingDarkElfTarget.isDead) {
+                    const target = kingDarkElfTarget;
+                    const kDiff = target.group.position.subtract(elf.group.position);
+                    kDiff.y = 0;
+                    const kDist = kDiff.length();
+                    const kDir = kDist > 0.0001 ? kDiff.normalize() : new BABYLON.Vector3(0, 0, 1);
+
+                    if (kDist > 2.2) {
+                        elf.group.position.addInPlace(kDir.scale(0.24));
+                        elf.group.rotation.y = Math.atan2(kDir.x, kDir.z);
+                        elf.animationState = 'run';
+                        elf._animMult = 1.1;
+                    } else {
+                        elf.animationState = 'attack';
+                        if (!elf._kingTapCooldown) elf._kingTapCooldown = 0;
+                        elf._kingTapCooldown -= engine.getDeltaTime();
+                        if (elf._kingTapCooldown <= 0) {
+                            target.kingTapHitsRemaining = (target.kingTapHitsRemaining || 2) - 1;
+                            createExplosion(target.group.position, 'white');
+                            if (target.kingTapHitsRemaining <= 0) {
+                                target.health = 0;
+                                target.isDead = true;
+                                kingDarkElfTarget = null;
+                            }
+                            elf._kingTapCooldown = 280;
+                        }
+                    }
+
+                    updateElfJumpAndSwim(elf, engine.getDeltaTime());
+                    updateElfAnimation(elf, engine.getDeltaTime());
+                    return;
+                }
+
                 // King wanders slowly around the front of the house
                 const kingHome = new BABYLON.Vector3(campCenter.x, 1, campCenter.z + 8);
                 if (!elf.wanderTarget) {
@@ -3592,7 +4943,6 @@ engine.runRenderLoop(() => {
                     );
                     elf.animationState = 'idle';
                 }
-                elf.group.position.y = 1 + Math.sin(Date.now() * 0.0012) * 0.06;
             } else if (nearest && minDist < 18) {
                 // Regular elves flee from zombie soldier; they only fight normal zombies
                 if (nearest.isSoldier) {
@@ -3626,10 +4976,15 @@ engine.runRenderLoop(() => {
                         if (!elf._attackCooldown) elf._attackCooldown = 0;
                         elf._attackCooldown -= engine.getDeltaTime();
                         if (elf._attackCooldown <= 0) {
+                            if (nearest.isDarkElf && Math.random() < DARK_ELF_ELF_WIN_CHANCE) {
+                                onDarkElfDefeatedElf(nearest, elf);
+                                return;
+                            }
+
                             nearest.health -= 1;
                             updateZombieHealthBar(nearest);
                             elf._attackCooldown = 300;
-                            // When zombie dies, flag elf to return to camp
+                            // When enemy dies, flag elf to return to camp
                             if (nearest.health <= 0) {
                                 elf.returning = true;
                                 elf.wanderTimer = 0;
@@ -3698,6 +5053,7 @@ engine.runRenderLoop(() => {
             }
         }
 
+        updateElfJumpAndSwim(elf, engine.getDeltaTime());
         updateElfAnimation(elf, engine.getDeltaTime());
     });
 
@@ -3708,7 +5064,7 @@ engine.runRenderLoop(() => {
     });
 
     // Movement with WASD (disabled during cutscene)
-    if (!cutsceneActive) {
+    if (!cutsceneActive && !missionUIOpen) {
         const moveSpeed = 0.24; // 20% slower than original 0.3
         const movement = new BABYLON.Vector3(0, 0, 0);
 
@@ -3768,6 +5124,29 @@ engine.runRenderLoop(() => {
             }
         } else {
             camera.position.z = newPosition.z;
+        }
+
+        // Swim state in river (lets player cross while adding water movement feel).
+        const playerInRiver = isInRiver(camera.position.x, camera.position.z, 0.8);
+        player.isSwimming = playerInRiver;
+        player.groundLevel = playerInRiver ? 1.28 : 2;
+
+        if (player.swimArms && player.swimArms.root) {
+            player.swimArms.root.setEnabled(playerInRiver);
+            if (playerInRiver) updatePlayerSwimArms();
+        }
+        if (player.sword && player.sword.swordRoot) {
+            player.sword.swordRoot.setEnabled(!playerInRiver);
+        }
+
+        if (!player.isJumping) {
+            if (playerInRiver) {
+                const swimBob = Math.sin(Date.now() * 0.012) * 0.06;
+                player.currentY = player.groundLevel + swimBob;
+            } else {
+                player.currentY = player.groundLevel;
+            }
+            camera.position.y = player.currentY;
         }
 
         // Arrow key camera rotation
@@ -3880,7 +5259,8 @@ engine.runRenderLoop(() => {
         }
 
         if (!blockedByKing && !isJumpingOnHead && !player.lastDamagedZombies.has(zombie)) {
-            player.health--;
+            const dmg = zombie.isDarkElf ? 2 : 1;
+            player.health -= dmg;
             updateHealthBar();
         }
         zombie.hitPlayer = true;
@@ -3914,6 +5294,9 @@ engine.runRenderLoop(() => {
     // Update water slash projectiles
     updateWaterSlashProjectiles(engine.getDeltaTime());
 
+    // Update corrupted water bolts (dark elf ranged attack)
+    updateCorruptedWaterBolts(engine.getDeltaTime());
+
     // Update wind slash projectiles
     updateWindSlashProjectiles(engine.getDeltaTime());
 
@@ -3929,6 +5312,12 @@ engine.runRenderLoop(() => {
     // Update NPC fire dragon (fire dialogue scene)
     updateNpcFireDragon();
 
+    // Update wind dragon sprites
+    updateWindDragonSprites(engine.getDeltaTime());
+
+    // Update NPC wind dragon (wind dialogue scene)
+    updateNpcWindDragon();
+
     // Update dark energy HUD cooldown
     if (player.hasDarkEnergy) {
         const deEl = document.getElementById('darkenergy-cooldown-text');
@@ -3943,6 +5332,9 @@ engine.runRenderLoop(() => {
             }
         }
     }
+
+    // Update explosion particles
+    updateExplosions();
 
     // Draw minimap
     drawMinimap();

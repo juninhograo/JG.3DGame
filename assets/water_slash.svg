@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 256">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#bff3ff" stop-opacity="0.2"/>
+      <stop offset="45%" stop-color="#79d8ff" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#1b8cff" stop-opacity="0.0"/>
+    </linearGradient>
+    <linearGradient id="core" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#f4fdff" stop-opacity="0.7"/>
+      <stop offset="55%" stop-color="#d2f4ff" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#72c8ff" stop-opacity="0.0"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <g filter="url(#glow)">
+    <path d="M24 146 C120 80, 256 56, 466 84 C344 142, 224 174, 24 146 Z" fill="url(#body)"/>
+    <path d="M32 138 C132 92, 272 80, 434 96 C310 132, 192 158, 32 138 Z" fill="url(#core)"/>
+  </g>
+
+  <circle cx="160" cy="130" r="10" fill="#ecfbff" fill-opacity="0.6"/>
+  <circle cx="208" cy="122" r="8" fill="#f4feff" fill-opacity="0.7"/>
+  <circle cx="274" cy="112" r="6" fill="#ffffff" fill-opacity="0.65"/>
+</svg>

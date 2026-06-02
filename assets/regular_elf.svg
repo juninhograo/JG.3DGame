@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Regular Elf">
+  <defs>
+    <linearGradient id="tunic" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#7bc497"/>
+      <stop offset="100%" stop-color="#2f7f56"/>
+    </linearGradient>
+  </defs>
+  <circle cx="64" cy="33" r="15" fill="#f1d6b5" stroke="#2d1d12" stroke-width="3"/>
+  <path d="M44 64 C52 50 76 50 84 64 L88 104 L40 104 Z" fill="url(#tunic)" stroke="#23543a" stroke-width="3"/>
+  <rect x="56" y="62" width="16" height="42" rx="6" fill="#305c8a"/>
+  <ellipse cx="58" cy="33" rx="3" ry="2" fill="#2d1d12"/>
+  <ellipse cx="70" cy="33" rx="3" ry="2" fill="#2d1d12"/>
+  <path d="M58 41 Q64 45 70 41" fill="none" stroke="#2d1d12" stroke-width="2" stroke-linecap="round"/>
+  <path d="M23 94 L41 94" stroke="#7a581a" stroke-width="4" stroke-linecap="round"/>
+  <path d="M36 87 L44 95 L36 103" fill="none" stroke="#cbd5e1" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="89" y="73" width="7" height="31" fill="#7a581a"/>
+  <rect x="96" y="72" width="10" height="34" fill="#d3d8df" stroke="#6b7380" stroke-width="2"/>
+</svg>
