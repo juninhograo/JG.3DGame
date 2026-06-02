@@ -1879,6 +1879,10 @@ function showWindPage() {
     document.getElementById('wind-dialogue-text').textContent = windDialogueLines[windDialoguePage];
     const btn = document.getElementById('wind-dialogue-btn');
     btn.textContent = windDialoguePage < windDialogueLines.length - 1 ? '[ Continue ]' : '[ I understand ]';
+    // Update speaker name per page
+    const speakers = ['Elder Thornwood', 'Elder Thornwood', 'The Elf King', 'The Elf King', 'Elder Thornwood', 'The Elf King', 'Elder Thornwood', 'Elder Thornwood'];
+    const speakerEl = document.getElementById('wind-cutscene-speaker');
+    if (speakerEl) speakerEl.textContent = speakers[windDialoguePage] || 'Elder Thornwood';
 }
 
 function advanceWindDialogue() {
@@ -1944,16 +1948,17 @@ function fireWindSlash() {
         const tex = new BABYLON.Texture('assets/Copilot_20260531_085637.png', scene, false, true);
         tex.uScale  = 1 / WIND_SPRITE_COLS;
         tex.vScale  = 1 / WIND_SPRITE_ROWS;
-        tex.uOffset = 0;
+        tex.uOffset = 1 / WIND_SPRITE_COLS; // skip frame 0 (row-label column)
         // FRONT row = top row of image (invertY=true → high V)
         tex.vOffset = (WIND_SPRITE_ROWS - 1) / WIND_SPRITE_ROWS;
 
         mat.diffuseTexture  = tex;
         mat.emissiveTexture = tex;
         mat.disableLighting = true;
-        // Additive blending — white highlights glow, black becomes transparent
-        mat.alphaMode = BABYLON.Engine.ALPHA_ADD;
-        mat.alpha = 0.92;
+        // Use alpha channel from the PNG to cut out the background
+        tex.hasAlpha = true;
+        mat.useAlphaFromDiffuseTexture = true;
+        mat.transparencyMode = BABYLON.Material.MATERIAL_ALPHABLEND;
         mat.backFaceCulling = false;
         plane.material = mat;
 
@@ -1962,13 +1967,13 @@ function fireWindSlash() {
             vel: forward.scale(0.62),
             born: now,
             hit: false,
-            frame: 0
+            frame: 1  // start at 1, skipping label column
         });
     });
 }
 
 function updateWindSlashProjectiles(dt) {
-    const maxLife = WIND_SPRITE_COLS * WIND_FRAME_DUR;
+    const maxLife = (WIND_SPRITE_COLS - 1) * WIND_FRAME_DUR; // 6 usable frames (skip frame 0)
     for (let i = windSlashProjectiles.length - 1; i >= 0; i--) {
         const proj = windSlashProjectiles[i];
         const age = Date.now() - proj.born;
@@ -1984,8 +1989,8 @@ function updateWindSlashProjectiles(dt) {
         // Move forward
         proj.plane.position.addInPlace(proj.vel);
 
-        // Advance sprite frame
-        const frame = Math.min(WIND_SPRITE_COLS - 1, Math.floor(age / WIND_FRAME_DUR));
+        // Advance sprite frame — skip frame 0 (label column), loop frames 1–6
+        const frame = 1 + (Math.floor(age / WIND_FRAME_DUR) % (WIND_SPRITE_COLS - 1));
         if (frame !== proj.frame) {
             proj.frame = frame;
             proj.tex.uOffset = frame / WIND_SPRITE_COLS;
